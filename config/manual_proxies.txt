@@ -1,0 +1,4 @@
+# One proxy per line: server:port:secret
+# Lines starting with # are ignored.
+149.154.175.50:443:ee0102030405060708090a0b0c0d0e0f10
+149.154.167.51:443:ee1102030405060708090a0b0c0d0e0f10

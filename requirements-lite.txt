@@ -1,0 +1,11 @@
+# Lightweight runtime dependencies: everything needed for the command-line features
+# (collect / benchmark / export / best10 / scheduler).
+#
+# Recommended for Termux / Android: no web dashboard, no dev tools, and nothing that
+# needs to be compiled from source beyond pycryptodome (which only needs clang).
+#
+# Want the web dashboard too?  pip install fastapi uvicorn
+httpx>=0.27.0
+PyYAML>=6.0.1
+pycryptodome>=3.20.0
+tqdm>=4.66.0

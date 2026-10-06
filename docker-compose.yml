@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  mtselector-dashboard:
+    build: .
+    container_name: mtselector-dashboard
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./config:/app/config
+    command: ["dashboard"]
+    restart: unless-stopped
+
+  mtselector-scheduler:
+    build: .
+    container_name: mtselector-scheduler
+    volumes:
+      - ./output:/app/output
+      - ./logs:/app/logs
+      - ./config:/app/config
+    command: ["scheduler"]
+    restart: unless-stopped

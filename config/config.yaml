@@ -1,0 +1,65 @@
+# Telegram MTProto Smart Selector - Configuration
+
+# Proxy sources. Each source has a type and a location.
+# Supported types: github_raw, http_txt, http_json, json_feed, telegram_channel(optional/manual)
+sources:
+  # Live, auto-updated (every ~8h) MTProto proxy list from GitHub
+  - name: "yagami200-proxies-txt"
+    type: "http_txt"
+    url: "https://raw.githubusercontent.com/Yagami200/free-mtproto-proxies/main/all_proxies.txt"
+    enabled: true
+
+  # Same project, JSON format (kept as a second, redundant parse of the same data)
+  - name: "yagami200-proxies-json"
+    type: "http_json"
+    url: "https://raw.githubusercontent.com/Yagami200/free-mtproto-proxies/main/proxies.json"
+    enabled: true
+
+  # Live, auto-updated (every ~3h) MTProto proxy list from GitHub (Persian project)
+  - name: "argh94-telegram-proxy-scraper"
+    type: "http_txt"
+    url: "https://raw.githubusercontent.com/Argh94/telegram-proxy-scraper/main/proxy.txt"
+    enabled: true
+
+  # Your own manual/offline list (edit config/manual_proxies.txt to add proxies by hand)
+  - name: "local-manual-list"
+    type: "http_txt"
+    url: "file://config/manual_proxies.txt"
+    enabled: true
+
+# Networking / testing behaviour
+testing:
+  workers: 200            # concurrent async workers (supports 100+/500+/1000+)
+  timeout_seconds: 5.0     # per-attempt timeout
+  retries: 3               # number of samples per proxy
+  connect_timeout_seconds: 3.0
+
+# Scoring weights (must sum to 1.0, values are checked/normalized at runtime)
+scoring:
+  latency_weight: 0.35
+  success_rate_weight: 0.35
+  stability_weight: 0.20
+  timeout_weight: 0.10
+  max_latency_ms: 2000     # latencies above this score 0 on the latency component
+
+# Output / export
+output:
+  folder: "output"
+  min_score: 0.0
+  max_latency_ms: 5000
+  top_sizes: [10, 50, 100]
+
+# Refresh / scheduler
+scheduler:
+  mode: "manual"           # manual | continuous | scheduler
+  interval_minutes: 15
+
+# Dashboard
+dashboard:
+  host: "0.0.0.0"
+  port: 8000
+
+# Logging
+logging:
+  level: "INFO"
+  log_dir: "logs"
