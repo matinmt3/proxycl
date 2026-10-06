@@ -1,86 +1,89 @@
-"""Parsers that turn raw source payloads into Proxy objects."""
+"""Parsers for Telegram proxy links and text/JSON feeds."""
+
 from __future__ import annotations
 
+import html
 import json
 import re
-from typing import List
 from urllib.parse import parse_qs, urlparse
 
+from tester.secrets import decode_secret, normalize_port, normalize_server
 from utils.models import Proxy
 
-TG_LINK_RE = re.compile(
-    r"(?:https?://t\.me/proxy|tg://proxy)\?[^\s\"'<>]+", re.IGNORECASE
-)
-LINE_RE = re.compile(r"^\s*([A-Za-z0-9_.\-]+):(\d{2,5}):([A-Fa-f0-9]{16,64})\s*$")
+TG_LINK_RE = re.compile(r"(?:https?://(?:t\.me|telegram\.me)/proxy|tg://proxy)\?[^\s\"'<>]+", re.IGNORECASE)
+
+
+def _make_proxy(server: object, port: object, secret: object, source: str) -> Proxy | None:
+    try:
+        if not isinstance(server, str) or not isinstance(secret, str):
+            return None
+        return Proxy(
+            server=normalize_server(server),
+            port=normalize_port(port),
+            secret=decode_secret(secret).encoded,
+            source=source,
+        )
+    except (TypeError, ValueError):
+        return None
 
 
 def _proxy_from_query(url: str, source: str) -> Proxy | None:
-    parsed = urlparse(url)
-    qs = parse_qs(parsed.query)
-    server = qs.get("server", [None])[0]
-    port = qs.get("port", [None])[0]
-    secret = qs.get("secret", [None])[0]
-    if not (server and port and secret):
-        return None
     try:
-        return Proxy(server=server, port=int(port), secret=secret, source=source)
+        qs = parse_qs(urlparse(url.rstrip(").,;")).query)
+        if any(len(qs.get(key, [])) != 1 for key in ("server", "port", "secret")):
+            return None
+        return _make_proxy(qs["server"][0], qs["port"][0], qs["secret"][0], source)
     except ValueError:
         return None
 
 
-def parse_text_blob(text: str, source: str) -> List[Proxy]:
-    """Parse tg:// links, t.me/proxy links, and server:port:secret lines from raw text."""
-    proxies: List[Proxy] = []
+def _dedupe(proxies: list[Proxy]) -> list[Proxy]:
+    unique = {}
+    for proxy in proxies:
+        unique.setdefault(proxy.key(), proxy)
+    return list(unique.values())
 
+
+def parse_text_blob(text: str, source: str) -> list[Proxy]:
+    """Parse links or server:port:secret lines, including IPv6 and base64 secrets."""
+    proxies: list[Proxy] = []
+    text = html.unescape(text).lstrip("\ufeff")
     for match in TG_LINK_RE.finditer(text):
-        p = _proxy_from_query(match.group(0), source)
-        if p:
-            proxies.append(p)
-
+        proxy = _proxy_from_query(match.group(0), source)
+        if proxy:
+            proxies.append(proxy)
     for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
+        line = line.split("#", 1)[0].strip()
+        if not line or "://" in line:
             continue
-        m = LINE_RE.match(line)
-        if m:
-            server, port, secret = m.groups()
-            try:
-                proxies.append(Proxy(server=server, port=int(port), secret=secret, source=source))
-            except ValueError:
-                continue
-
-    return proxies
+        fields = line.rsplit(":", 2)
+        if len(fields) != 3:
+            continue
+        proxy = _make_proxy(*fields, source)
+        if proxy:
+            proxies.append(proxy)
+    return _dedupe(proxies)
 
 
-def parse_json_feed(text: str, source: str) -> List[Proxy]:
-    """Parse a JSON feed. Supports either a list of proxy dicts, or {"proxies": [...]}.
-
-    Recognized dict keys (case-insensitive-ish): server/host/ip, port, secret.
-    Falls back to scanning any string values for tg:// links.
-    """
-    proxies: List[Proxy] = []
+def parse_json_feed(text: str, source: str) -> list[Proxy]:
+    """Accept proxy objects, arrays of links, and feeds containing nested string values."""
     try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        # not valid JSON, fall back to text parsing (some feeds embed links in JS)
+        data = json.loads(text.lstrip("\ufeff"))
+    except (json.JSONDecodeError, RecursionError):
         return parse_text_blob(text, source)
-
-    items = data.get("proxies") if isinstance(data, dict) else data
-    if isinstance(items, list):
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            server = item.get("server") or item.get("host") or item.get("ip")
-            port = item.get("port")
-            secret = item.get("secret")
-            if server and port and secret:
-                try:
-                    proxies.append(Proxy(server=str(server), port=int(port), secret=str(secret), source=source))
-                except ValueError:
-                    continue
-
-    if not proxies:
-        # fall back to regex scan of the raw JSON text (covers non-standard schemas)
-        proxies = parse_text_blob(text, source)
-
-    return proxies
+    proxies: list[Proxy] = []
+    pending = [data]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            fields = {key.lower(): item for key, item in value.items() if isinstance(key, str)}
+            server = fields.get("server") or fields.get("host") or fields.get("ip")
+            proxy = _make_proxy(server, fields.get("port"), fields.get("secret"), source)
+            if proxy:
+                proxies.append(proxy)
+            pending.extend(reversed(list(value.values())))
+        elif isinstance(value, list):
+            pending.extend(reversed(value))
+        elif isinstance(value, str):
+            proxies.extend(parse_text_blob(value, source))
+    return _dedupe(proxies)

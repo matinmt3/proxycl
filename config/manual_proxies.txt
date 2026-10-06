@@ -1,4 +1,6 @@
-# One proxy per line: server:port:secret
-# Lines starting with # are ignored.
-149.154.175.50:443:ee0102030405060708090a0b0c0d0e0f10
-149.154.167.51:443:ee1102030405060708090a0b0c0d0e0f10
+# Add your own MTProto proxies here, one per line.
+# Accepted forms: tg://proxy links, https://t.me/proxy links,
+# server:port:secret or [IPv6-address]:port:secret.
+# A raw secret is 16 bytes (32 hex digits); dd adds a padding marker;
+# ee requires the 16-byte key followed by the encoded TLS domain.
+# This file intentionally contains no pretend-live example endpoints.

@@ -1,45 +1,35 @@
-"""MTProto-level proxy validation.
+"""Validate MTProxy transport by requiring a nonce-matched MTProto resPQ.
 
-Unlike a plain TCP ping, this module speaks the actual MTProto client-to-proxy
-"obfuscated2" handshake that real Telegram clients use when connecting through
-an MTProto proxy (this handshake, and the abridged framing format, are
-documented publicly as part of Telegram's own open-source MTProxy code).
-
-For each proxy we:
-  1. Open a raw TCP connection and time it.
-  2. Build the 64-byte obfuscated2 handshake, keyed with the proxy's secret,
-     and send it.
-  3. Send a minimal abridged-framed probe packet.
-  4. Wait for the proxy to respond with *something* (bytes, or at minimum
-     keep the socket open without an immediate RST/FIN) within the timeout.
-
-A proxy that isn't a real, live MTProto endpoint (dead IP, wrong secret,
-plain HTTP server, firewall drop, etc.) will fail at one of these steps,
-which is a much stronger signal than "the TCP port is open".
-
-Full application-layer validation (completing a DH key exchange with the
-Telegram DC behind the proxy) is out of scope for a lightweight health
-checker and is noted as a possible extension in the README.
+Supports raw, dd padded, and ee FakeTLS secrets. This unauthenticated probe
+checks the proxy's ability to answer MTProto; it does not log in, create an
+authorization key, or authenticate the Telegram server's RSA identity.
+Protocol references: core.telegram.org/mtproto/mtproto-transports and TDLib's
+mtproto_api.tl, ProxySecret.cpp, TlsInit.cpp, and TcpTransport.cpp.
 """
+
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
+import socket
 import struct
 import time
-from typing import Optional
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 
+from tester.faketls import authenticate_server_hello, build_client_hello, read_tls_record, wrap_tls_payload
+from tester.secrets import ProxySecret, decode_secret, normalize_port, normalize_server
 from utils.models import FailureReason, Proxy, TestSample
 
-# Bytes that must not appear as the first byte of the random handshake header,
-# since they collide with other well-known protocols (TLS, HTTP, etc.)
-_FORBIDDEN_FIRST_BYTES = {0xEF, 0x16, 0x50, 0x47, 0x48, 0xDD}
-_FORBIDDEN_FIRST_WORDS = {b"HEAD", b"POST", b"GET ", b"OPTI", b"\x00\x00\x00\x00"}
-
-ABRIDGED_TAG = b"\xef\xef\xef\xef"
+ABRIDGED_TAG = b"\xef" * 4
+PADDED_TAG = b"\xdd" * 4
+REQ_PQ_MULTI = 0xBE7E8EF1
+RES_PQ = 0x05162463
+VECTOR = 0x1CB5C415
+MAX_PROBE_RESPONSE = 4096
+_FORBIDDEN_FIRST_WORDS = {b"HEAD", b"POST", b"GET ", b"OPTI", b"\x16\x03\x01\x02", PADDED_TAG, b"\xee" * 4}
 
 
 def _make_aes_ctr(key: bytes, iv: bytes):
@@ -47,171 +37,193 @@ def _make_aes_ctr(key: bytes, iv: bytes):
     return AES.new(key, AES.MODE_CTR, counter=ctr)
 
 
-def build_obfuscated_handshake(secret_hex: str) -> tuple[bytes, bytes, bytes]:
-    """Build the 64-byte obfuscated2 handshake header.
-
-    Returns (header_bytes, encrypt_key, encrypt_iv) so the caller can keep
-    encrypting subsequent bytes on the same stream.
-    """
-    secret = bytes.fromhex(secret_hex[-32:]) if len(secret_hex) >= 32 else bytes.fromhex(secret_hex.zfill(32))
-
-    while True:
-        random_bytes = bytearray(os.urandom(64))
-        if random_bytes[0] in _FORBIDDEN_FIRST_BYTES:
-            continue
-        if bytes(random_bytes[0:4]) in _FORBIDDEN_FIRST_WORDS:
-            continue
-        if random_bytes[4:8] == b"\x00\x00\x00\x00":
-            continue
-        break
-
-    # Key/IV material for client -> proxy direction, taken from bytes 8..56
-    key = bytes(random_bytes[8:40])
-    iv = bytes(random_bytes[40:56])
-
-    # Mix in the shared secret (simple secrets: XOR key with secret bytes)
-    if secret:
-        mixed = bytearray(key)
-        for i in range(len(mixed)):
-            mixed[i] ^= secret[i % len(secret)]
-        key = bytes(mixed)
-
-    # Reversed copy is used for the proxy -> client (decryption) direction.
-    reversed_random = bytes(random_bytes[55:7:-1])
-    dec_key = reversed_random[0:32]
-    if secret:
-        mixed = bytearray(dec_key)
-        for i in range(len(mixed)):
-            mixed[i] ^= secret[i % len(secret)]
-        dec_key = bytes(mixed)
-
-    # Protocol tag for "abridged" framing goes in bytes 56:60
-    random_bytes[56:60] = ABRIDGED_TAG
-
-    # Encrypt the full 64-byte buffer with itself as keystream source, then
-    # splice back bytes 56:64 in plaintext-of-the-encrypted form (this is
-    # the standard obfuscated2 trick so the server can derive the same key
-    # purely from what's on the wire).
+def _build_transport(secret: ProxySecret, dc_id: int = 2):
+    for _ in range(100):
+        raw = bytearray(os.urandom(64))
+        if raw[0] != 0xEF and bytes(raw[:4]) not in _FORBIDDEN_FIRST_WORDS and raw[4:8] != bytes(4):
+            break
+    else:
+        raise ValueError("Could not generate an obfuscated header")
+    raw[56:60] = PADDED_TAG if secret.padded else ABRIDGED_TAG
+    raw[60:62] = struct.pack("<h", dc_id)
+    key = hashlib.sha256(bytes(raw[8:40]) + secret.key).digest()
+    iv = bytes(raw[40:56])
+    reversed_header = bytes(raw[::-1])
+    decrypt_key = hashlib.sha256(reversed_header[8:40] + secret.key).digest()
+    decrypt_iv = reversed_header[40:56]
     encryptor = _make_aes_ctr(key, iv)
-    encrypted = bytearray(encryptor.encrypt(bytes(random_bytes)))
-    header = bytes(random_bytes[0:56]) + bytes(encrypted[56:64])
+    encrypted = encryptor.encrypt(raw)
+    header = bytes(raw[:56]) + encrypted[56:64]
+    return header, encryptor, _make_aes_ctr(decrypt_key, decrypt_iv), key, iv
 
+
+def build_obfuscated_handshake(secret_hex: str, dc_id: int = 2) -> tuple[bytes, bytes, bytes]:
+    """Compatibility helper returning the header and outgoing key/IV.
+
+    The caller must advance its AES stream by 64 bytes before encrypting data.
+    Runtime exchange uses _build_transport to retain that stream automatically.
+    """
+    header, _, _, key, iv = _build_transport(decode_secret(secret_hex), dc_id)
     return header, key, iv
 
 
-def build_abridged_probe() -> bytes:
-    """A minimal abridged-framed packet used purely as a liveness probe.
+def _unencrypted_message(body: bytes) -> bytes:
+    message_id = (time.time_ns() * (1 << 32) // 1_000_000_000) & ~3
+    return struct.pack("<QQI", 0, message_id, len(body)) + body
 
-    Abridged framing: 1 length byte (in 4-byte words) followed by payload.
-    We send a tiny, well-formed but inert padding packet so a real MTProto
-    endpoint has something syntactically valid to (not) act on, without
-    requiring a full authorization key exchange.
-    """
-    payload = struct.pack("<I", 0) + os.urandom(8)  # 12 bytes, benign padding
-    length_words = len(payload) // 4
-    if length_words < 0x7F:
-        return bytes([length_words]) + payload
-    return b"\x7f" + length_words.to_bytes(3, "little") + payload
+
+def build_abridged_probe(nonce: bytes | None = None) -> bytes:
+    """Build an unauthenticated req_pq_multi envelope with a fresh 128-bit nonce."""
+    nonce = os.urandom(16) if nonce is None else nonce
+    if len(nonce) != 16:
+        raise ValueError("Probe nonce must be 16 bytes")
+    packet = _unencrypted_message(struct.pack("<I", REQ_PQ_MULTI) + nonce)
+    return bytes([len(packet) // 4]) + packet
+
+
+def _build_probe(nonce: bytes, padded: bool) -> bytes:
+    abridged = build_abridged_probe(nonce)
+    if not padded:
+        return abridged
+    padding = os.urandom(os.urandom(1)[0] % 16)
+    packet = abridged[1:] + padding
+    return struct.pack("<I", len(packet)) + packet
+
+
+class _EncryptedReader:
+    def __init__(self, reader, decryptor, fake_tls: bool):
+        self.reader = reader
+        self.decryptor = decryptor
+        self.fake_tls = fake_tls
+        self.buffer = bytearray()
+
+    async def readexactly(self, count: int) -> bytes:
+        if not self.fake_tls:
+            return self.decryptor.decrypt(await self.reader.readexactly(count))
+        while len(self.buffer) < count:
+            record = await read_tls_record(self.reader, 23)
+            self.buffer.extend(self.decryptor.decrypt(record[5:]))
+        result = bytes(self.buffer[:count])
+        del self.buffer[:count]
+        return result
+
+
+async def _read_frame(reader: _EncryptedReader, padded: bool) -> bytes:
+    if padded:
+        size = int.from_bytes(await reader.readexactly(4), "little")
+    else:
+        prefix = (await reader.readexactly(1))[0]
+        if prefix == 0x7F:
+            words = int.from_bytes(await reader.readexactly(3), "little")
+            if words < 127:
+                raise ValueError("Noncanonical abridged length")
+            size = words * 4
+        elif 0 < prefix < 0x7F:
+            size = prefix * 4
+        else:
+            raise ValueError("Invalid abridged length")
+    if not 20 <= size <= MAX_PROBE_RESPONSE:
+        raise ValueError("Invalid MTProto response length")
+    return await reader.readexactly(size)
+
+
+def validate_res_pq(packet: bytes, nonce: bytes, padded: bool = False) -> bool:
+    """Reject arbitrary banners, echo servers, malformed TL, and mismatched nonces."""
+    if len(nonce) != 16 or len(packet) < 20:
+        return False
+    auth_key_id, message_id, body_size = struct.unpack_from("<QQI", packet)
+    padding_size = len(packet) - 20 - body_size
+    if auth_key_id != 0 or message_id % 2 != 1 or body_size % 4 or body_size < 56:
+        return False
+    if padding_size < 0 or padding_size > (15 if padded else 0):
+        return False
+    body = packet[20 : 20 + body_size]
+    if struct.unpack_from("<I", body)[0] != RES_PQ or body[4:20] != nonce:
+        return False
+    # resPQ contains server_nonce:int128, pq:string, Vector<long> fingerprints.
+    offset = 36
+    pq_size = body[offset]
+    if not 1 <= pq_size <= 8:
+        return False
+    offset += 1 + pq_size
+    offset += (-offset) % 4
+    if len(body) < offset + 8:
+        return False
+    constructor, count = struct.unpack_from("<II", body, offset)
+    return constructor == VECTOR and 1 <= count <= 64 and offset + 8 + count * 8 == len(body)
+
+
+async def _exchange_probe(reader, writer, secret: ProxySecret) -> None:
+    if secret.domain:
+        hello = build_client_hello(secret)
+        writer.write(hello)
+        await writer.drain()
+        await authenticate_server_hello(reader, secret, hello)
+    header, encryptor, decryptor, _, _ = _build_transport(secret)
+    nonce = os.urandom(16)
+    payload = header + encryptor.encrypt(_build_probe(nonce, secret.padded))
+    writer.write(wrap_tls_payload(payload, first=True) if secret.domain else payload)
+    await writer.drain()
+    packet = await _read_frame(_EncryptedReader(reader, decryptor, bool(secret.domain)), secret.padded)
+    if not validate_res_pq(packet, nonce, secret.padded):
+        raise ValueError("Proxy did not return a valid nonce-matched MTProto resPQ")
 
 
 async def test_proxy_once(
-    proxy: Proxy,
-    connect_timeout: float = 3.0,
-    handshake_timeout: float = 5.0,
+    proxy: Proxy, connect_timeout: float = 3.0, handshake_timeout: float = 5.0
 ) -> TestSample:
-    """Run one full connect + MTProto handshake attempt against a proxy."""
     start = time.perf_counter()
-    reader: Optional[asyncio.StreamReader] = None
-    writer: Optional[asyncio.StreamWriter] = None
+    writer = None
+    tcp_latency_ms = None
 
+    def failed(reason: FailureReason) -> TestSample:
+        return TestSample(
+            success=False,
+            failure_reason=reason,
+            tcp_latency_ms=tcp_latency_ms,
+            total_latency_ms=(time.perf_counter() - start) * 1000,
+        )
+
+    try:
+        secret = decode_secret(proxy.secret)
+    except ValueError:
+        return failed(FailureReason.SECRET_INVALID)
+    try:
+        server = normalize_server(proxy.server)
+        port = normalize_port(proxy.port)
+    except ValueError:
+        return failed(FailureReason.DNS_ERROR)
     try:
         connect_start = time.perf_counter()
         reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(proxy.server, proxy.port),
-            timeout=connect_timeout,
+            asyncio.open_connection(server, port), timeout=connect_timeout
         )
         tcp_latency_ms = (time.perf_counter() - connect_start) * 1000
+    except socket.gaierror:
+        return failed(FailureReason.DNS_ERROR)
     except asyncio.TimeoutError:
-        return TestSample(
-            success=False,
-            failure_reason=FailureReason.TCP_TIMEOUT,
-            total_latency_ms=(time.perf_counter() - start) * 1000,
-        )
-    except (ConnectionRefusedError, OSError):
-        return TestSample(
-            success=False,
-            failure_reason=FailureReason.TCP_REFUSED,
-            total_latency_ms=(time.perf_counter() - start) * 1000,
-        )
-
+        return failed(FailureReason.TCP_TIMEOUT)
+    except OSError:
+        return failed(FailureReason.TCP_REFUSED)
     try:
         handshake_start = time.perf_counter()
-        try:
-            header, key, iv = build_obfuscated_handshake(proxy.secret)
-        except ValueError:
-            return TestSample(
-                success=False,
-                failure_reason=FailureReason.SECRET_INVALID,
-                tcp_latency_ms=tcp_latency_ms,
-                total_latency_ms=(time.perf_counter() - start) * 1000,
-            )
-
-        writer.write(header)
-        await writer.drain()
-
-        encryptor = _make_aes_ctr(key, iv)
-        probe = build_abridged_probe()
-        writer.write(encryptor.encrypt(probe))
-        await writer.drain()
-
-        try:
-            data = await asyncio.wait_for(reader.read(64), timeout=handshake_timeout)
-        except asyncio.TimeoutError:
-            return TestSample(
-                success=False,
-                failure_reason=FailureReason.HANDSHAKE_TIMEOUT,
-                tcp_latency_ms=tcp_latency_ms,
-                total_latency_ms=(time.perf_counter() - start) * 1000,
-            )
-
-        handshake_latency_ms = (time.perf_counter() - handshake_start) * 1000
-        total_latency_ms = (time.perf_counter() - start) * 1000
-
-        # An immediate clean close (b"") right after our handshake strongly
-        # suggests the remote isn't a live MTProto endpoint (dead proxy,
-        # wrong secret rejected, or a non-MTProto service on that port).
-        if data == b"":
-            return TestSample(
-                success=False,
-                failure_reason=FailureReason.HANDSHAKE_INVALID,
-                tcp_latency_ms=tcp_latency_ms,
-                total_latency_ms=total_latency_ms,
-            )
-
+        await asyncio.wait_for(_exchange_probe(reader, writer, secret), timeout=handshake_timeout)
         return TestSample(
             success=True,
             tcp_latency_ms=tcp_latency_ms,
-            handshake_latency_ms=handshake_latency_ms,
-            total_latency_ms=total_latency_ms,
-        )
-    except (ConnectionResetError, OSError):
-        return TestSample(
-            success=False,
-            failure_reason=FailureReason.HANDSHAKE_INVALID,
-            tcp_latency_ms=tcp_latency_ms,
+            handshake_latency_ms=(time.perf_counter() - handshake_start) * 1000,
             total_latency_ms=(time.perf_counter() - start) * 1000,
         )
-    except Exception:  # noqa: BLE001
-        return TestSample(
-            success=False,
-            failure_reason=FailureReason.UNKNOWN,
-            tcp_latency_ms=tcp_latency_ms,
-            total_latency_ms=(time.perf_counter() - start) * 1000,
-        )
+    except asyncio.TimeoutError:
+        return failed(FailureReason.HANDSHAKE_TIMEOUT)
+    except (ValueError, asyncio.IncompleteReadError, OSError):
+        return failed(FailureReason.HANDSHAKE_INVALID)
+    except Exception:
+        return failed(FailureReason.UNKNOWN)
     finally:
         if writer is not None:
+            writer.close()
             try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:  # noqa: BLE001
+                await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
+            except (OSError, asyncio.TimeoutError):
                 pass

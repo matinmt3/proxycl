@@ -1,10 +1,14 @@
 """Shared data models for the Telegram MTProto Smart Selector."""
+
 from __future__ import annotations
 
+import math
+import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
+from urllib.parse import urlencode
 
 
 class FailureReason(str, Enum):
@@ -15,6 +19,7 @@ class FailureReason(str, Enum):
     HANDSHAKE_TIMEOUT = "handshake_timeout"
     HANDSHAKE_INVALID = "handshake_invalid"
     SECRET_INVALID = "secret_invalid"
+    UNSUPPORTED_TRANSPORT = "unsupported_transport"
     UNKNOWN = "unknown"
 
 
@@ -28,8 +33,15 @@ class Proxy:
     source: str = "unknown"
     tag: Optional[str] = None
 
+    def __post_init__(self):
+        self.server = self.server.strip().strip("[]").lower()
+        self.secret = self.secret.strip()
+        # Hexadecimal secrets are case-insensitive. Base64url secrets are not.
+        if re.fullmatch(r"[0-9a-fA-F]+", self.secret):
+            self.secret = self.secret.lower()
+
     def key(self) -> str:
-        return f"{self.server}:{self.port}:{self.secret}".lower()
+        return f"{self.server}:{self.port}:{self.secret}"
 
     def to_dict(self) -> dict:
         return {
@@ -41,13 +53,14 @@ class Proxy:
         }
 
     def tg_link(self) -> str:
-        link = f"tg://proxy?server={self.server}&port={self.port}&secret={self.secret}"
-        return link
+        return "tg://proxy?" + urlencode({"server": self.server, "port": self.port, "secret": self.secret})
 
 
 @dataclass
 class TestSample:
     """Result of a single connection attempt to a proxy."""
+
+    __test__ = False
 
     success: bool
     tcp_latency_ms: Optional[float] = None
@@ -90,7 +103,14 @@ class ProxyResult:
         return timeouts / len(self.samples)
 
     def _latencies(self) -> list:
-        return [s.total_latency_ms for s in self.samples if s.success and s.total_latency_ms is not None]
+        return [
+            s.total_latency_ms
+            for s in self.samples
+            if s.success
+            and isinstance(s.total_latency_ms, (int, float))
+            and math.isfinite(s.total_latency_ms)
+            and s.total_latency_ms >= 0
+        ]
 
     @property
     def avg_latency_ms(self) -> Optional[float]:
@@ -128,7 +148,7 @@ class ProxyResult:
         if avg == 0:
             return 0.0
         variance = sum((x - avg) ** 2 for x in lats) / len(lats)
-        std = variance ** 0.5
+        std = variance**0.5
         cv = std / avg
         return max(0.0, min(1.0, 1.0 - cv))
 
@@ -150,7 +170,9 @@ class ProxyResult:
                 "success_rate": round(self.success_rate, 4),
                 "timeout_rate": round(self.timeout_rate, 4),
                 "avg_latency_ms": round(self.avg_latency_ms, 2) if self.avg_latency_ms is not None else None,
-                "median_latency_ms": round(self.median_latency_ms, 2) if self.median_latency_ms is not None else None,
+                "median_latency_ms": (
+                    round(self.median_latency_ms, 2) if self.median_latency_ms is not None else None
+                ),
                 "jitter_ms": round(self.jitter_ms, 2) if self.jitter_ms is not None else None,
                 "stability": round(self.stability, 4),
                 "score": round(self.score, 4),

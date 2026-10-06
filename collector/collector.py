@@ -1,4 +1,5 @@
 """Fetches proxies from all enabled sources, merges and deduplicates them."""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +14,8 @@ from config.loader import AppConfig, SourceConfig
 from utils.models import Proxy
 
 logger = logging.getLogger("mtselector.collector")
+MAX_SOURCE_BYTES = 4 * 1024 * 1024
+MAX_SOURCE_REQUESTS = 8
 
 
 class Collector:
@@ -20,17 +23,34 @@ class Collector:
         self.config = config
 
     async def _fetch_url(self, client: httpx.AsyncClient, url: str) -> str:
-        resp = await client.get(url, timeout=15.0, follow_redirects=True)
-        resp.raise_for_status()
-        return resp.text
+        async with client.stream("GET", url, timeout=15.0, follow_redirects=True) as resp:
+            resp.raise_for_status()
+            chunks = []
+            total = 0
+            async for chunk in resp.aiter_bytes():
+                total += len(chunk)
+                if total > MAX_SOURCE_BYTES:
+                    raise ValueError("Source exceeds the 4 MiB download limit")
+                chunks.append(chunk)
+            body = b"".join(chunks)
+            encoding = resp.encoding or "utf-8"
+            if body.startswith(b"\xef\xbb\xbf"):
+                encoding = "utf-8-sig"
+            return body.decode(encoding, errors="replace")
 
     async def _read_local_file(self, url: str) -> str:
         # supports file:// paths for manual/offline proxy lists
         path = url.replace("file://", "", 1)
         p = Path(path)
-        if not p.exists():
-            raise FileNotFoundError(f"Local source file not found: {path}")
-        return p.read_text(encoding="utf-8")
+
+        def read() -> str:
+            with p.open("rb") as handle:
+                body = handle.read(MAX_SOURCE_BYTES + 1)
+            if len(body) > MAX_SOURCE_BYTES:
+                raise ValueError("Local source exceeds the 4 MiB size limit")
+            return body.decode("utf-8-sig")
+
+        return await asyncio.to_thread(read)
 
     async def _fetch_source(self, client: httpx.AsyncClient, source: SourceConfig) -> List[Proxy]:
         try:
@@ -38,14 +58,17 @@ class Collector:
                 text = await self._read_local_file(source.url)
             else:
                 text = await self._fetch_url(client, source.url)
+            if source.type in ("http_json", "json_feed", "github_raw"):
+                proxies = parse_json_feed(text, source.name)
+            else:
+                proxies = parse_text_blob(text, source.name)
         except Exception as exc:  # noqa: BLE001 - a bad source must not kill the whole run
-            logger.warning("Source '%s' failed: %s", source.name, exc)
+            # HTTP exception text may contain private feed credentials in its URL.
+            detail = type(exc).__name__
+            if isinstance(exc, httpx.HTTPStatusError):
+                detail += f" (HTTP {exc.response.status_code})"
+            logger.warning("Source '%s' failed: %s", source.name, detail)
             return []
-
-        if source.type in ("http_json", "json_feed"):
-            proxies = parse_json_feed(text, source.name)
-        else:
-            proxies = parse_text_blob(text, source.name)
 
         logger.info("Source '%s' -> %d proxies", source.name, len(proxies))
         return proxies
@@ -56,8 +79,17 @@ class Collector:
             logger.warning("No enabled sources configured.")
             return []
 
-        async with httpx.AsyncClient(headers={"User-Agent": "Mozilla/5.0 (Telegram-MTProto-Smart-Selector)"}) as client:
-            results = await asyncio.gather(*(self._fetch_source(client, s) for s in enabled))
+        semaphore = asyncio.Semaphore(MAX_SOURCE_REQUESTS)
+
+        async with httpx.AsyncClient(
+            headers={"User-Agent": "Revmamad/2.0 (MTProto proxy collector)"}
+        ) as client:
+
+            async def fetch(source: SourceConfig) -> List[Proxy]:
+                async with semaphore:
+                    return await self._fetch_source(client, source)
+
+            results = await asyncio.gather(*(fetch(source) for source in enabled))
 
         merged: Dict[str, Proxy] = {}
         for group in results:

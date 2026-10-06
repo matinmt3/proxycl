@@ -1,324 +1,142 @@
-# Revmamad — Telegram MTProto Proxy Radar
+# REVMAMAD v2 — Telegram MTProto Proxy Radar
 
-A toolkit that **discovers, probes, benchmarks, scores, and exports** Telegram MTProto proxies. It sends an obfuscated transport probe and measures responses as a heuristic health check. Runs on a PC or directly on Android via Termux.
+Collect, verify, rank, and export Telegram MTProto proxies. Version 2 includes a phone-sized ASCII **REVMAMAD** banner and a web dashboard that works with the lightweight Termux installation.
 
----
-
-## Why this is more than a bash-script proxy checker
-
-| | Typical scripts | This project |
-|---|---|---|
-| Validation | TCP connect only | Real obfuscated2 MTProto handshake + abridged-framing probe |
-| Concurrency | Sequential / xargs | `asyncio` with a configurable worker pool (100 / 500 / 1000+) |
-| Scoring | Sort by ping | Weighted score: latency, success rate, stability, timeout rate |
-| Sources | One list | Pluggable multi-source collector (GitHub, JSON feeds, TXT feeds, local files) |
-| Output | One text file | JSON, TXT, CSV, `tg://` links, top10/50/100 |
-| Operations | Run once | Manual / continuous / interval-based scheduler modes |
-| Visibility | None | FastAPI dashboard with charts, search, sort, filter, JSON API |
-| Packaging | Script | Dockerfile + docker-compose, one-command startup |
-
----
-
-## Project layout
-
-```
-TelegramProxySelector/
-├── collector/       # multi-source proxy discovery + parsing + de-dup
-├── tester/          # real MTProto obfuscated-handshake validator + parallel runner
-├── benchmark/       # weighted scoring algorithm
-├── exporter/        # json/txt/csv/tg-links/topN exporters
-├── dashboard/        # FastAPI web dashboard
-├── scheduler/        # manual / continuous / interval scheduler
-├── utils/            # shared models, colored logger, progress bar
-├── config/            # config.yaml + loader + example manual proxy list
-├── tests/             # pytest suite
-├── docs/              # extended documentation
-├── main.py            # CLI entrypoint
-├── install.sh         # Termux installer + automatic menu launcher
-├── requirements.txt
-├── requirements-lite.txt
-├── Dockerfile
-├── docker-compose.yml
-└── LICENSE
-```
-
----
-
-## Installation
-
-```bash
-git clone https://github.com/matinmt3/proxycl.git Revmamad
-cd Revmamad
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Requires Python 3.12+.
-
-Two dependency files are provided:
-
-| File | What it installs | Use it for |
-|---|---|---|
-| `requirements.txt` | everything: CLI + web dashboard + test/lint tools | PC, Docker |
-| `requirements-lite.txt` | only what the command-line features need | Termux / phones, quick installs |
-
-The web dashboard is optional. With the lite file, add it later with `pip install fastapi uvicorn`.
-
-### One-command install (Termux)
-
-After the source is published on the `main` branch with `install.sh` at the
-repository root, install and launch Revmamad in Termux with this single line:
+## Install or update in Termux
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/matinmt3/proxycl/main/install.sh)
 ```
 
-Use `bash <( ... )` so the interactive menu keeps its keyboard input. If `curl`
-is missing, first run `pkg install -y curl`. The installer:
+If curl is missing, run `pkg install -y curl` first. The installer installs Python, pip, Git, clang, make, and pkg-config, clones into `~/Revmamad`, installs `requirements-lite.txt`, checks runtime dependencies, and opens the menu automatically. Use process substitution as shown so the menu retains keyboard input.
 
-1. Updates the Termux package index and installs `python`, `python-pip`, `git`,
-   `clang`, `make`, and `pkg-config`.
-2. Clones the `main` branch into `~/Revmamad`, regardless of your current directory.
-3. Installs `requirements-lite.txt` with `python -m pip`.
-4. Automatically starts `python main.py` and opens the existing menu.
+Run the same command to update. Errors remain visible; pip uses bounded connection timeouts and retries. Interrupted fresh clones are cleaned up. Existing tracked edits, another repository, or another branch stop the update rather than overwrite your files.
 
-Running it again updates the same checkout with a fast-forward pull. It stops
-with a visible error if that directory belongs to another repository, uses a
-different branch, contains tracked local edits, or if installation/update fails.
-The installer supports both a repository with app files at its root and one
-with the app in a `TelegramProxySelector/` subdirectory.
-
-Next time, for the root layout, run:
+Next time:
 
 ```bash
 cd ~/Revmamad && python main.py
 ```
 
-Using a fork? Point the installer at it without editing anything:
+Overrides: `REVMAMAD_DIR`, `REVMAMAD_REPO`, and `REVMAMAD_BRANCH`. A branch override also requires changing the branch in the raw download URL. Root and nested `TelegramProxySelector/` layouts are supported; the installer prints the correct restart command.
+
+Termux manages pip through `python-pip`; do not upgrade pip with pip. See the [official package patch](https://github.com/termux/termux-packages/blob/master/packages/python-pip/install_py_preventing_pip_from_installing.patch).
+
+## Menu and commands
+
+| Menu | Action |
+|---|---|
+| 1 | Scan and display **up to 10 verified** proxies, sorted by latency; save links |
+| 2 | Full scan and export JSON, TXT, CSV, links, and top-N files |
+| 3 | Start the local web dashboard and open the browser |
+| 4 | Collect candidates without claiming they are working |
+| 5 | Exit |
+
+`1 / 10` means one candidate passed the checks on your network. Ten is a maximum, not a guaranteed supply of live proxies. The scan reports collected, tested, verified, and failure counts. It never fills the list with failed candidates.
 
 ```bash
-REVMAMAD_REPO=https://github.com/<you>/<repo>.git bash <(curl -fsSL https://raw.githubusercontent.com/<you>/<repo>/main/install.sh)
+python main.py --help
+python main.py --version
+python main.py best10
+python main.py run
+python main.py collect
+python main.py benchmark
+python main.py export
+python main.py dashboard
+python main.py dashboard --no-browser
+python main.py scheduler
+python main.py top 20
+python main.py json
+python main.py csv
+python main.py --config /path/to/custom.yaml best10
 ```
 
-Optional overrides are `REVMAMAD_DIR` (installation directory) and
-`REVMAMAD_BRANCH` (default: `main`). If changing the branch, change the branch in
-the raw download URL too. The installer prints the correct restart command for
-the actual installation path, including the nested layout when present.
+Invalid input returns to the menu. Ctrl+C cancels a scan. CLI errors produce a clear message and nonzero status. Default config, local lists, exports, and logs resolve from the project directory even when launched elsewhere. Relative paths in a custom YAML resolve from its containing directory.
 
-Termux manages pip through `python-pip`; do not upgrade pip with pip. See the
-[Termux package patch](https://github.com/termux/termux-packages/blob/master/packages/python-pip/install_py_preventing_pip_from_installing.patch).
+## Phone web dashboard
 
-### Publishing a fork
+Menu option 3 and `python main.py dashboard` use Python's standard library; **FastAPI, uvicorn, and Rust are not required**. The command invokes `termux-open-url` on Android and a regular browser on desktop. If automatic opening is unavailable, open the printed address, normally **http://127.0.0.1:8000**.
 
-Keep `install.sh` and the application files at the repository root on `main`.
-To make a fork the installer's default source, change the default repository
-URL in `install.sh` and update the clone/raw download links in this README.
-Alternatively, use the `REVMAMAD_REPO` override shown above. Preserve the LF
-line endings in shell scripts; `.gitattributes` already enforces them.
-Confirm the raw `.../main/install.sh` link displays the script before sharing it.
+Keep the dashboard's Termux session running while viewing it. Ctrl+C stops it and returns to the menu. Results appear after a scan/export. Search, sort, statistics, and links remain usable when the optional chart CDN is unavailable. The dashboard uses your configured output folder and handles missing or malformed output files.
 
-### Running on Android via Termux (manual)
+Desktop/container deployments can use the optional FastAPI adapter:
 
 ```bash
-pkg update -y
-pkg install -y python python-pip git clang make pkg-config
+uvicorn dashboard.app:app --host 0.0.0.0 --port 8000
+```
+
+## Desktop installation
+
+Python 3.12 or newer:
+
+```bash
 git clone https://github.com/matinmt3/proxycl.git Revmamad
 cd Revmamad
-python -m pip install -r requirements-lite.txt
+python -m venv .venv
+# Linux/macOS: source .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 python main.py
 ```
 
-- `clang` is needed so `pycryptodome` can compile on-device.
-- Keep package errors visible and resolve the specific missing package/build tool before retrying.
-- The interactive menu works the same as on desktop. Option 1 gets you the 10 fastest working proxies.
-- Dashboard on a phone: `python -m pip install fastapi uvicorn` (this may need `pkg install -y rust` because of pydantic), then `python main.py dashboard` and open `http://localhost:8000` in the phone's browser.
+`requirements-lite.txt` contains runtime packages. `requirements.txt` also includes optional desktop dashboard and development/test tools.
 
----
+## Configuration and sources
 
-## Configuration
+Edit `config/config.yaml` or pass `--config`. Worker counts, timeouts, scoring weights, scheduler modes, and source types are validated before a scan.
 
-All behaviour is controlled by `config/config.yaml`:
+Sources support text, `tg://proxy` and `https://t.me/proxy` links, JSON arrays/objects, and local `file://` lists. Malformed entries and failed feeds are skipped so other sources continue. Duplicate candidates are combined. Public feeds and proxies change independently of this program; sources can be edited or disabled.
 
 ```yaml
 sources:
-  - name: "local-manual-list"
-    type: "http_txt"
-    url: "file://config/manual_proxies.txt"
+  - name: manual
+    type: http_txt
+    url: file://config/manual_proxies.txt
     enabled: true
-
 testing:
-  workers: 200
-  timeout_seconds: 5.0
+  workers: 100
+  timeout_seconds: 5
+  connect_timeout_seconds: 3
   retries: 3
-
-scoring:
-  latency_weight: 0.35
-  success_rate_weight: 0.35
-  stability_weight: 0.20
-  timeout_weight: 0.10
-
 output:
-  folder: "output"
-  min_score: 0.0
+  folder: output
+  min_score: 0
+  max_latency_ms: 5000
   top_sizes: [10, 50, 100]
-
 scheduler:
-  mode: "manual"       # manual | continuous | scheduler
+  mode: manual
   interval_minutes: 15
-
-dashboard:
-  host: "0.0.0.0"
-  port: 8000
 ```
 
-Add your own sources by appending to the `sources` list. Supported `type` values:
+Supported feed types: `http_txt`, `github_raw`, `http_json`, `json_feed`.
 
-- `http_txt` — plain text, one `server:port:secret` per line, or `tg://proxy?...` links
-- `http_json` / `json_feed` — JSON array or `{"proxies": [...]}` object
-- `github_raw` — same parsing as `http_txt`/`http_json`, just semantically a GitHub raw URL
-- any source URL beginning with `file://` is read from local disk (useful for manual/offline lists)
+## Verification and output
 
----
+Version 2 derives encryption keys from the secret, retains AES stream state, sends an unauthenticated MTProto `req_pq_multi`, and checks the matching nonce in `resPQ`. Random bytes and ordinary website responses do not count as verified proxies. Raw, `dd` padded-intermediate, and `ee` FakeTLS secrets use distinct transports.
 
-## Usage
+A successful check proves the endpoint relayed that probe at that time. It does not log into Telegram, create an authorized session, read messages, or guarantee later connectivity. See [protocol/performance notes](docs/PERFORMANCE.md).
+
+Exports contain only successful candidates satisfying score and latency limits. Empty scans replace stale exports. Atomic file replacement prevents the dashboard reading half-written JSON.
+
+| File | Contents |
+|---|---|
+| `proxy.json`, `proxy.txt`, `proxy.csv` | Ranked results |
+| `telegram_links.txt` | Telegram connection links |
+| `best10_links.txt` | Up to ten fastest eligible results |
+| `top10.json`, `top50.json`, `top100.json` | Configurable top-N subsets |
+
+Completely unsuccessful proxies score zero. Scheduler modes are manual, continuous, and interval; Ctrl+C stops the loop. Docker Compose runs dashboard and scheduler services with output/config/log volumes.
+
+## Tests
 
 ```bash
-python main.py                # interactive menu (easiest — just pick a number)
-python main.py best10          # collect + test + show/save the 10 fastest working proxies
-python main.py run             # full pipeline: collect + test + export (no menu)
-python main.py collect         # collect only, print count
-python main.py benchmark       # collect + test, print ranked table (no export)
-python main.py export          # collect + test + export all formats
-python main.py dashboard        # start the web dashboard on :8000
-python main.py scheduler        # run in the configured scheduler mode
-python main.py top 20           # print top 20 from the last export
-python main.py json              # regenerate and print path to proxy.json
-python main.py csv                # regenerate and print path to proxy.csv
+python -m pip install -r requirements.txt
+python -m pytest -q
+python -m ruff check .
 ```
 
-Running `python main.py` with no arguments shows a simple numbered menu —
-option **1** collects fresh proxies, tests them for real, and prints/saves
-the 10 fastest currently-working ones with ready-to-tap `tg://` links
-(also saved to `output/best10_links.txt`).
-
-### Example output
-
-```
-RANK SERVER                PORT   SCORE   SUCCESS  AVG MS
-------------------------------------------------------------
-1    149.154.167.51        443    0.91    1.00     41
-2    149.154.175.50        443    0.87    1.00     58
-```
-
-Exported files land in `output/`:
-
-- `proxy.json`, `proxy.txt`, `proxy.csv`
-- `telegram_links.txt` — ready-to-tap `tg://proxy?...` links
-- `top10.json`, `top50.json`, `top100.json`
-
----
-
-## How validation works
-
-Real Telegram clients connect to MTProto proxies using an obfuscated handshake
-(the same "obfuscated2" scheme documented in Telegram's own open-source
-MTProxy code) before any application data flows. This project builds that
-64-byte handshake using the proxy's secret, sends a minimal abridged-framed
-probe, and requires a nonempty response within the timeout. An empty response,
-connection error, or timeout is recorded as a failed attempt.
-
-This can help filter unreachable endpoints and connections that immediately
-close after the probe. The response is not decoded, so a positive result is a
-heuristic and does not prove a valid secret or a usable Telegram session.
-Completing a full DH key exchange with the Telegram datacenter behind the
-proxy is outside the current implementation; see
-[`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for notes on extending this.
-
----
-
-## Scoring
-
-```
-score = latency_weight   * (1 - avg_latency / max_latency)
-      + success_weight   * success_rate
-      + stability_weight * (1 - coefficient_of_variation)
-      + timeout_weight   * (1 - timeout_rate)
-```
-
-Weights are normalized automatically if they don't sum to 1.0. Tune them in
-`config.yaml` under `scoring:`.
-
----
-
-## Dashboard
-
-```bash
-python main.py dashboard
-# open http://localhost:8000
-```
-
-Shows total/healthy proxy counts, average latency, best/worst proxy, a
-latency chart for the top proxies, and a searchable/sortable/filterable
-table. Raw data is available at `GET /api/proxies` and `GET /api/stats`.
-
----
-
-## Docker
-
-```bash
-docker compose up --build
-```
-
-This starts:
-- `mtselector-dashboard` — dashboard on `http://localhost:8000`
-- `mtselector-scheduler` — runs the pipeline in the scheduler mode set in `config.yaml`
-
-`output/`, `logs/`, and `config/` are mounted as volumes so results and
-config changes persist across container restarts.
-
----
-
-## Troubleshooting
-
-**All proxies show 0% success rate.**
-Check that outbound TCP is actually allowed from your network/container to
-arbitrary IPs on arbitrary ports — some sandboxed/corporate networks block
-this. Also confirm your sources are returning real, currently-live proxies
-(public lists rot quickly).
-
-**A source keeps failing with an HTTP error.**
-The collector logs a warning and continues with other sources — it will not
-crash the whole run. Check the URL manually in a browser, or disable that
-source (`enabled: false`) if it has gone offline.
-
-**Dashboard shows no data.**
-Run `python main.py export` at least once first — the dashboard reads
-`output/proxy.json`.
-
----
-
-## FAQ
-
-**Does this decrypt or read my Telegram messages?**
-No. It only performs the outer transport-layer handshake used to reach a
-proxy; it never establishes an authorized Telegram session or touches
-message content.
-
-**Can I add private/paid proxy sources?**
-Yes — add any `http_txt`/`http_json` source, or drop a `server:port:secret`
-list at `config/manual_proxies.txt` and point a `file://` source at it.
-
-**How many workers should I use?**
-Start at 200 and watch your file-descriptor limits (`ulimit -n`) and network
-conditions; 1000+ workers can work well on a server with a generous FD limit
-and a fast NIC.
-
----
-
-## Performance tuning
-
-See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md).
+The suite covers collection/parsing, transport validation, workers, scoring, exports, menu/CLI actions, configuration, dashboard routes/browser opening, scheduling, and the installer. Installer tests use controlled command shims rather than modifying host packages. See [v2 validation](docs/TESTING.md) for checked scenarios and platform limits.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT — see [LICENSE](LICENSE).

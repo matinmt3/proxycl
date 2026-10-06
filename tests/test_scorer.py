@@ -1,5 +1,5 @@
-from config.loader import ScoringConfig
 from benchmark.scorer import rank, score_all, score_result
+from config.loader import ScoringConfig
 from utils.models import FailureReason, Proxy, ProxyResult, TestSample
 
 

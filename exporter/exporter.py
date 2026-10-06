@@ -1,9 +1,14 @@
 """Exports ranked proxy results into every required output format."""
+
 from __future__ import annotations
 
 import csv
 import json
 import logging
+import math
+import os
+import tempfile
+from io import StringIO
 from pathlib import Path
 from typing import List
 
@@ -23,24 +28,43 @@ class Exporter:
         return [
             r
             for r in results
-            if r.score >= self.output_cfg.min_score
-            and (r.avg_latency_ms is None or r.avg_latency_ms <= self.output_cfg.max_latency_ms)
+            if r.successes > 0
+            and math.isfinite(r.score)
+            and r.score >= self.output_cfg.min_score
+            and r.avg_latency_ms is not None
+            and math.isfinite(r.avg_latency_ms)
+            and 0 <= r.avg_latency_ms <= self.output_cfg.max_latency_ms
         ]
 
-    def export_json(self, results: List[ProxyResult], filename: str = "proxy.json") -> Path:
+    def _write(self, filename: str, text: str) -> Path:
+        if Path(filename).name != filename or filename in ("", ".", ".."):
+            raise ValueError("Export filename must be a filename inside the output directory")
         path = self.folder / filename
-        data = [r.to_dict() for r in results]
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", newline="", dir=self.folder, prefix=".revmamad-", delete=False
+            ) as stream:
+                temporary = Path(stream.name)
+                stream.write(text)
+            os.replace(temporary, path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
         return path
+
+    def export_json(self, results: List[ProxyResult], filename: str = "proxy.json") -> Path:
+        data = [r.to_dict() for r in results]
+        return self._write(filename, json.dumps(data, indent=2, allow_nan=False))
 
     def export_txt(self, results: List[ProxyResult], filename: str = "proxy.txt") -> Path:
-        path = self.folder / filename
-        lines = [f"{r.proxy.server}:{r.proxy.port}:{r.proxy.secret}  # score={r.score:.3f}" for r in results]
-        path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-        return path
+        lines = [
+            f"{'[' + r.proxy.server + ']' if ':' in r.proxy.server else r.proxy.server}:{r.proxy.port}:{r.proxy.secret}  # score={r.score:.3f}"
+            for r in results
+        ]
+        return self._write(filename, "\n".join(lines) + ("\n" if lines else ""))
 
     def export_csv(self, results: List[ProxyResult], filename: str = "proxy.csv") -> Path:
-        path = self.folder / filename
         fieldnames = [
             "server",
             "port",
@@ -56,40 +80,41 @@ class Exporter:
             "last_failure_reason",
             "tg_link",
         ]
-        with path.open("w", newline="", encoding="utf-8") as f:
+        with StringIO(newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for r in results:
                 d = r.to_dict()
                 writer.writerow({k: d.get(k) for k in fieldnames})
-        return path
+            return self._write(filename, f.getvalue())
 
     def export_telegram_links(self, results: List[ProxyResult], filename: str = "telegram_links.txt") -> Path:
-        path = self.folder / filename
         lines = [r.proxy.tg_link() for r in results]
-        path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-        return path
+        return self._write(filename, "\n".join(lines) + ("\n" if lines else ""))
 
     def export_top_n(self, results: List[ProxyResult], n: int) -> Path:
-        path = self.folder / f"top{n}.json"
+        if n < 1:
+            raise ValueError("Top count must be positive")
         data = [r.to_dict() for r in results[:n]]
-        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        return path
+        return self._write(f"top{n}.json", json.dumps(data, indent=2, allow_nan=False))
 
-    def export_best_n_readable(self, results: List[ProxyResult], n: int = 10, filename: str = "best10_links.txt") -> Path:
+    def export_best_n_readable(
+        self, results: List[ProxyResult], n: int = 10, filename: str = "best10_links.txt"
+    ) -> Path:
         """Human-friendly top-N file: rank, speed, and a ready-to-click tg:// link for each proxy.
 
         Sorted purely by speed (avg latency) among already-healthy, ranked proxies, so the
         fastest proxy is always #1 regardless of small score-weighting differences.
         """
-        path = self.folder / filename
-        healthy = [r for r in results if r.success_rate > 0 and r.avg_latency_ms is not None]
+        if n < 1:
+            raise ValueError("Top count must be positive")
+        healthy = self._filtered(results)
         healthy.sort(key=lambda r: r.avg_latency_ms)
         top = healthy[:n]
 
         lines = [
-            "Top {} Fastest Working MTProto Proxies".format(len(top)),
-            "Generated by Telegram MTProto Smart Selector",
+            "Top {} Fastest Responding MTProto Proxies (up to {} requested)".format(len(top), n),
+            "Generated by REVMAMAD",
             "=" * 60,
             "",
         ]
@@ -103,8 +128,7 @@ class Exporter:
         if not top:
             lines.append("No healthy proxies found in the last run. Run `python main.py export` again later.")
 
-        path.write_text("\n".join(lines), encoding="utf-8")
-        return path
+        return self._write(filename, "\n".join(lines))
 
     def export_all(self, results: List[ProxyResult]) -> dict:
         ranked = self._filtered(results)

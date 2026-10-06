@@ -30,3 +30,33 @@ def test_empty_result():
     assert result.success_rate == 0.0
     assert result.avg_latency_ms is None
     assert result.stability == 0.0
+
+
+def test_proxy_key_preserves_case_sensitive_base64_secret():
+    first = Proxy("Proxy.Example", 443, "AQ_abZ")
+    second = Proxy("proxy.example", 443, "aq_abz")
+    assert first.server == "proxy.example"
+    assert first.key() != second.key()
+    assert Proxy("[::1]", 443, "AABBCC").key() == "::1:443:aabbcc"
+
+
+def test_telegram_link_encodes_ipv6_and_reserved_secret_characters():
+    from urllib.parse import parse_qs, urlparse
+
+    proxy = Proxy("[2001:db8::1]", 443, "AQ+/=")
+    fields = parse_qs(urlparse(proxy.tg_link()).query)
+    assert fields == {"server": ["2001:db8::1"], "port": ["443"], "secret": ["AQ+/="]}
+
+
+def test_invalid_latency_does_not_produce_nan_exports():
+    proxy = Proxy("1.2.3.4", 443, "abc123")
+    result = ProxyResult(
+        proxy,
+        samples=[
+            TestSample(True, total_latency_ms=float("nan")),
+            TestSample(True, total_latency_ms=-10),
+            TestSample(True, total_latency_ms=20),
+        ],
+    )
+    assert result.avg_latency_ms == 20
+    assert result.to_dict()["avg_latency_ms"] == 20

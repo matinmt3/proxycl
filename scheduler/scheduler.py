@@ -1,4 +1,5 @@
 """Runs the collect -> test -> score -> export pipeline on a schedule."""
+
 from __future__ import annotations
 
 import logging
@@ -23,9 +24,9 @@ class Scheduler:
         """Loop forever, running back-to-back with no delay between cycles."""
         logger.info("Starting continuous mode (back-to-back cycles).")
         while True:
-            start = time.time()
+            start = time.monotonic()
             self.pipeline_fn()
-            elapsed = time.time() - start
+            elapsed = time.monotonic() - start
             logger.info("Cycle finished in %.1fs, starting next cycle immediately.", elapsed)
 
     def run_scheduled(self):
@@ -33,9 +34,9 @@ class Scheduler:
         interval = max(1, self.config.scheduler.interval_minutes) * 60
         logger.info("Starting scheduler mode: every %d minutes.", self.config.scheduler.interval_minutes)
         while True:
-            start = time.time()
+            start = time.monotonic()
             self.pipeline_fn()
-            elapsed = time.time() - start
+            elapsed = time.monotonic() - start
             sleep_for = max(0.0, interval - elapsed)
             logger.info("Cycle finished in %.1fs. Sleeping %.1fs until next run.", elapsed, sleep_for)
             time.sleep(sleep_for)

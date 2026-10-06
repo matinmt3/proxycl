@@ -3,16 +3,10 @@
 # Proxy sources. Each source has a type and a location.
 # Supported types: github_raw, http_txt, http_json, json_feed, telegram_channel(optional/manual)
 sources:
-  # Live, auto-updated (every ~8h) MTProto proxy list from GitHub
-  - name: "yagami200-proxies-txt"
+  # Public text feed; individual endpoints are verified at scan time.
+  - name: "solispirit-mtproto"
     type: "http_txt"
-    url: "https://raw.githubusercontent.com/Yagami200/free-mtproto-proxies/main/all_proxies.txt"
-    enabled: true
-
-  # Same project, JSON format (kept as a second, redundant parse of the same data)
-  - name: "yagami200-proxies-json"
-    type: "http_json"
-    url: "https://raw.githubusercontent.com/Yagami200/free-mtproto-proxies/main/proxies.json"
+    url: "https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt"
     enabled: true
 
   # Live, auto-updated (every ~3h) MTProto proxy list from GitHub (Persian project)
@@ -29,7 +23,7 @@ sources:
 
 # Networking / testing behaviour
 testing:
-  workers: 200            # concurrent async workers (supports 100+/500+/1000+)
+  workers: 100            # Termux is additionally capped to 64 simultaneous probes
   timeout_seconds: 5.0     # per-attempt timeout
   retries: 3               # number of samples per proxy
   connect_timeout_seconds: 3.0

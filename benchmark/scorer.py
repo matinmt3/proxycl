@@ -1,6 +1,8 @@
 """Computes a weighted 0..1 score for each proxy from its benchmark samples."""
+
 from __future__ import annotations
 
+import math
 from typing import List
 
 from config.loader import ScoringConfig
@@ -16,6 +18,9 @@ def _latency_score(avg_latency_ms: float | None, max_latency_ms: float) -> float
 
 
 def score_result(result: ProxyResult, scoring: ScoringConfig) -> float:
+    latency = result.avg_latency_ms
+    if result.successes == 0 or latency is None or not math.isfinite(latency) or latency < 0:
+        return 0.0
     cfg = scoring.normalized()
 
     latency_component = _latency_score(result.avg_latency_ms, cfg.max_latency_ms)
