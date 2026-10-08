@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# REVMAMAD v3 - MTProto + Web Proxy installer and interactive launcher.
+# REVMAMAD v3.1 - MTProto, Telegram Links + HTTP/SOCKS installer and launcher.
 # Use bash <(curl -fsSL <raw-install-url>) to keep keyboard input available.
 
 set -euo pipefail
@@ -36,7 +36,7 @@ while [[ "$REPO_DIR" == */ && "$REPO_DIR" != / ]]; do
     REPO_DIR="${REPO_DIR%/}"
 done
 
-printf '\n  REVMAMAD v3 - MTProto + Web Proxy Radar\n'
+printf '\n  REVMAMAD v3.1 - MTProto, Telegram Links + HTTP/SOCKS\n'
 if [[ -e "$REPO_DIR" || -L "$REPO_DIR" ]]; then
     [[ -e "$REPO_DIR/.git" ]] || fail "$REPO_DIR already exists but is not a project checkout. Set REVMAMAD_DIR to another directory."
     command -v git >/dev/null 2>&1 || fail "Git is unavailable. Run 'pkg install git' in Termux and retry."

@@ -10,12 +10,13 @@ class Element {
     this.value = "";
     this.classList = {toggle() {}};
     this.children = [];
+    this.listeners = {};
   }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   setAttribute() {}
   removeAttribute() {}
-  addEventListener() {}
+  addEventListener(type, callback) { this.listeners[type] = callback; }
   focus() {}
   select() {}
 }
@@ -30,7 +31,7 @@ function client() {
   element("sortBy").value = "score";
   element("limit").value = "10";
   const context = vm.createContext({
-    URL, URLSearchParams, AbortController, Map, console,
+    URL, URLSearchParams, AbortController, Map, console, atob,
     location: {search: ""}, history: {replaceState() {}}, navigator: {},
     setTimeout() { return 0; }, clearTimeout() {},
     fetch() { return new Promise(() => {}); },
@@ -104,4 +105,70 @@ test("refresh replaces same-count, same-second snapshots and source health", () 
   context.current.summary.run_id = "two";
   vm.runInContext("render(current)", context);
   assert.match(vm.runInContext("renderedIdentity", context), /two/);
+});
+
+test("Telegram Web Link uses matched HTTPS share links and never HTTP proxy URIs", () => {
+  const {context, element} = client();
+  vm.runInContext("selectMode('telegram')", context);
+  assert.equal(vm.runInContext("mode", context), "telegram");
+  assert.match(element("mode-title").textContent, /Telegram/);
+  assert.equal(element("protocol-field").hidden, true);
+  context.row = {server: "proxy.example", port: 443, secret: "00112233445566778899aabbccddeeff",
+    web_link: "https://t.me/proxy?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff",
+    uri: "http://proxy.example:443"};
+  assert.equal(vm.runInContext("safeConnection(row)", context), context.row.web_link);
+  for (const prefix of ["http://t.me/proxy", "https://t.me.evil.example/proxy", "https://t.me:8443/proxy", "https://user@t.me/proxy", "https://t.me/other"]) {
+    context.row.web_link = prefix + "?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff";
+    assert.equal(vm.runInContext("safeConnection(row)", context), null);
+  }
+});
+
+test("three keyboard tabs cycle and the HTTP/SOCKS mode keeps its own labels", () => {
+  const {context, element} = client();
+  const arrow = {key: "ArrowRight", preventDefault() {}};
+  for (const expected of ["telegram", "web", "mtproto"]) {
+    const current = vm.runInContext("mode", context);
+    element(`tab-${current}`).listeners.keydown(arrow);
+    assert.equal(vm.runInContext("mode", context), expected);
+  }
+  element("tab-mtproto").listeners.keydown({key: "End", preventDefault() {}});
+  assert.equal(vm.runInContext("mode", context), "web");
+  assert.match(element("mode-title").textContent, /HTTP.*SOCKS/);
+  assert.equal(element("protocol-field").hidden, false);
+});
+
+test("interrupted scans display partial results and skipped candidates accurately", () => {
+  const {context, element} = client();
+  context.current = {state: "ready", summary: {completed_at: "2026-10-08T12:00:00+00:00",
+    interrupted: true, selected: 8, tested: 3, skipped: 5, verified: 1, eligible: 1},
+    rows: [{rank: 1, server: "partial.example", port: 443, source: "feed", score: .8}], source_reports: []};
+  vm.runInContext("render(current, true)", context);
+  assert.equal(element("partial-note").hidden, false);
+  assert.match(element("partial-note").textContent, /Stopped scan.*partial results/i);
+  assert.match(element("scan-meta").textContent, /Skipped: 5/);
+  assert.match(element("scan-time-label").textContent, /STOPPED/);
+  assert.equal(element("count-tested").textContent, "3");
+  assert.equal(element("tested-description").textContent, "Candidates with samples");
+  assert.match(element("results-title").textContent, /partial/i);
+});
+
+test("Telegram share links require a valid row secret and matching decoded identity", () => {
+  const {context} = client();
+  vm.runInContext("selectMode('telegram')", context);
+  context.row = {server: "proxy.example", port: 443,
+    web_link: "https://t.me/proxy?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff"};
+  for (const secret of [undefined, null, false, 1, "", "abcdefghijklmnop"]) {
+    context.row.secret = secret;
+    assert.equal(vm.runInContext("safeConnection(row)", context), null);
+  }
+  context.row.secret = Buffer.from("00112233445566778899aabbccddeeff", "hex").toString("base64url");
+  assert.equal(vm.runInContext("safeConnection(row)", context), context.row.web_link);
+  context.row.secret = "dd00112233445566778899aabbccddeeff";
+  assert.equal(vm.runInContext("safeConnection(row)", context), null);
+  const key = "fa".repeat(16);
+  for (const hex of [key, "dd" + key, "ee" + key + Buffer.from("example.org").toString("hex")]) {
+    context.row.secret = Buffer.from(hex, "hex").toString("base64url");
+    context.row.web_link = `https://t.me/proxy?server=proxy.example&port=443&secret=${hex}`;
+    assert.equal(vm.runInContext("safeConnection(row)", context), context.row.web_link);
+  }
 });

@@ -9,9 +9,11 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from tester.secrets import decode_secret
+
 DEFAULT_OUTPUT_FOLDER = Path(__file__).resolve().parents[1] / "output"
 DEFAULT_DATA_FILE = DEFAULT_OUTPUT_FOLDER / "proxy.json"  # v2 compatibility
-MODES = ("mtproto", "web")
+MODES = ("mtproto", "telegram", "web")
 PROTOCOLS = ("http", "https", "socks4", "socks5")
 SORT_FIELDS = ("score", "avg_latency_ms", "success_rate", "stability")
 COUNT_FIELDS = ("collected", "selected", "tested", "verified", "eligible", "displayed")
@@ -25,7 +27,7 @@ def number(value):
 
 def validate_mode(mode: str) -> str:
     if mode not in MODES:
-        raise ValueError("mode must be mtproto or web")
+        raise ValueError("mode must be mtproto, telegram, or web")
     return mode
 
 
@@ -38,8 +40,8 @@ def _endpoint_key(row: dict, mode: str) -> str:
     return f"{server}:{row.get('port', '')}:{row.get('secret', '')}"
 
 
-def _safe_action(row: dict, mode: str) -> str | None:
-    value = row.get("tg_link" if mode == "mtproto" else "uri")
+def _safe_action(row: dict, mode: str, *, require_secret: bool = False) -> str | None:
+    value = row.get({"mtproto": "tg_link", "telegram": "web_link", "web": "uri"}[mode])
     if not isinstance(value, str) or len(value) > 2048 or any(ord(char) <= 32 for char in value):
         return None
     try:
@@ -62,17 +64,32 @@ def _safe_action(row: dict, mode: str) -> str | None:
             ):
                 return None
         else:
-            if parsed.scheme != "tg" or parsed.netloc != "proxy" or parsed.path:
+            if mode == "telegram":
+                if (
+                    parsed.scheme != "https"
+                    or parsed.hostname != "t.me"
+                    or parsed.port not in (None, 443)
+                    or parsed.path != "/proxy"
+                ):
+                    return None
+            elif parsed.scheme != "tg" or parsed.netloc != "proxy" or parsed.path:
                 return None
-            query = parse_qs(parsed.query)
+            query = parse_qs(parsed.query, keep_blank_values=True)
             if any(len(query.get(key, [])) != 1 for key in ("server", "port", "secret")):
+                return None
+            if mode == "telegram" and set(query) != {"server", "port", "secret"}:
                 return None
             if query["server"][0].strip("[]").casefold() != server or query["port"][0] != str(port):
                 return None
             secret = query["secret"][0]
             if not re.fullmatch(r"[A-Za-z0-9_+/=-]{16,600}", secret):
                 return None
-            if row.get("secret") is not None and secret != row["secret"]:
+            if mode == "telegram" or require_secret:
+                if not isinstance(row.get("secret"), str):
+                    return None
+                if decode_secret(secret).encoded != decode_secret(row["secret"]).encoded:
+                    return None
+            elif row.get("secret") is not None and secret != row["secret"]:
                 return None
         return value
     except (ValueError, KeyError, TypeError):
@@ -93,12 +110,15 @@ def _rows(rows: list, mode: str) -> list[dict]:
         for field in (*SORT_FIELDS, "timeout_rate", "median_latency_ms", "jitter_ms"):
             item[field] = number(row.get(field))
         item["source"] = str(row.get("source") or "unknown")
-        if mode == "mtproto":
+        if mode != "web":
             item.pop("uri", None)
             item.pop("protocol", None)
-            item["tg_link"] = _safe_action(row, mode)
+            item["tg_link"] = _safe_action(row, "mtproto", require_secret=mode == "telegram")
+            if mode == "telegram" or "web_link" in item:
+                item["web_link"] = _safe_action(row, "telegram")
         else:
             item.pop("tg_link", None)
+            item.pop("web_link", None)
             item.pop("secret", None)
             item["uri"] = _safe_action(row, mode)
         result.append(item)
@@ -146,6 +166,29 @@ def _validate_summary(summary: dict) -> None:
         for key, value in failures.items()
     ):
         raise ValueError("Invalid failure counts")
+    interrupted = summary.get("interrupted", False)
+    if type(interrupted) is not bool or summary["tested"] > summary["selected"]:
+        raise ValueError("Invalid interrupted scan metadata")
+    skipped = summary.get("skipped", summary["selected"] - summary["tested"])
+    if type(skipped) is not int or skipped != summary["selected"] - summary["tested"]:
+        raise ValueError("Invalid skipped count")
+    if not interrupted and skipped:
+        raise ValueError("Unfinished scan cannot be marked complete")
+    retries = summary.get("retry_count")
+    if "retry_count" in summary and (type(retries) is not int or retries < 1):
+        raise ValueError("Invalid retry count")
+    if "fully_tested" in summary or "partial_tested" in summary:
+        fully, partial = summary.get("fully_tested"), summary.get("partial_tested")
+        if (
+            type(fully) is not int
+            or type(partial) is not int
+            or not 0 <= fully <= summary["tested"]
+            or not 0 <= partial <= summary["tested"]
+            or fully + partial != summary["tested"]
+            or retries == 1
+            and partial != 0
+        ):
+            raise ValueError("Invalid complete/partial retry counts")
 
 
 def _validate_health(rows: list) -> None:
@@ -247,12 +290,17 @@ def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
             raise ValueError("Invalid snapshot row")
         if raw["summary"]["eligible"] != len(rows) or raw["summary"]["displayed"] != min(10, len(rows)):
             raise ValueError("Snapshot counts do not match its eligible rows")
+        summary = dict(raw["summary"])
+        summary.setdefault("interrupted", False)
+        summary.setdefault("skipped", summary["selected"] - summary["tested"])
         return {
             "version": 1,
             "mode": mode,
             "state": "ready",
-            "message": "Completed scan snapshot.",
-            "summary": dict(raw["summary"]),
+            "message": (
+                "Stopped scan / partial results." if summary["interrupted"] else "Completed scan snapshot."
+            ),
+            "summary": summary,
             "source_reports": reports,
             "rows": rows,
         }
@@ -279,7 +327,7 @@ def filter_rows(
         or type(limit) is not int
         or not 1 <= limit <= 5000
         or protocol not in ("all", *PROTOCOLS)
-        or mode == "mtproto"
+        or mode != "web"
         and protocol != "all"
     ):
         raise ValueError("Invalid sort_by, order, limit, or protocol")

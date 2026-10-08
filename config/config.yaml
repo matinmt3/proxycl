@@ -1,6 +1,6 @@
 # REVMAMAD - Configuration
 
-# Defaults: 60 MTProto remote feeds, one manual list, and 64 Web feeds.
+# Defaults: 51 MTProto remote feeds, one manual list, and 64 Web feeds.
 # Explicit sources: [] or web_sources: [] disables that mode independently.
 # An external configuration uses a catalog only when it names source_catalog.
 source_catalog: config/sources.yaml

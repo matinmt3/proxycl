@@ -26,7 +26,7 @@ def cli_config(config, monkeypatch):
     return config
 
 
-@pytest.mark.parametrize("flag, expected", [("--help", "--no-browser"), ("--version", "REVMAMAD 3.0.0")])
+@pytest.mark.parametrize("flag, expected", [("--help", "--no-browser"), ("--version", "REVMAMAD 3.1.0")])
 def test_help_and_version_work_without_any_installed_packages(tmp_path, flag, expected):
     result = subprocess.run(
         [sys.executable, "-S", str(main.PROJECT_ROOT / "main.py"), flag],
@@ -50,7 +50,7 @@ def test_bad_cli_arguments_are_rejected_before_loading_config(args, monkeypatch,
 
 
 def test_menu_exercises_every_action_and_returns_after_dashboard(cli_config, monkeypatch, capsys):
-    choices = iter(["invalid", "1", "1", "2", "2", "12", "3", "4", "2", "5"])
+    choices = iter(["invalid", "1", "1", "2", "2", "12", "3", "2", "5", "4", "5", "3", "6"])
     monkeypatch.setattr(builtins, "input", lambda prompt: next(choices))
     called = []
     monkeypatch.setattr(main, "cmd_best10", lambda cfg, **kw: called.append(("test", kw)))
@@ -61,16 +61,17 @@ def test_menu_exercises_every_action_and_returns_after_dashboard(cli_config, mon
     assert main.main(["menu", "--no-browser"]) == 0
     assert called == [
         ("test", {"mode": "mtproto", "limit": None}),
-        ("test", {"mode": "web", "limit": 12}),
+        ("test", {"mode": "telegram", "limit": 12}),
+        ("test", {"mode": "web", "limit": 5}),
         ("dashboard", False),
         ("collect", {"mode": "web"}),
     ]
     output = capsys.readouterr().out
-    assert "REVMAMAD v3.0.0" in output and "Invalid choice" in output and "Bye!" in output
+    assert "REVMAMAD v3.1.0" in output and "Invalid choice" in output and "Bye!" in output
 
 
 def test_menu_survives_action_failure_and_interrupt(cli_config, monkeypatch, capsys):
-    choices = iter(["1", "1", "2", "1", "5"])
+    choices = iter(["1", "1", "2", "1", "6"])
     monkeypatch.setattr(builtins, "input", lambda prompt: next(choices))
 
     def fail(cfg, *, mode, limit):
@@ -140,7 +141,7 @@ def test_banner_fits_32_column_termux(monkeypatch, capsys):
     lines = capsys.readouterr().out.splitlines()
     assert max(map(len, lines)) <= 32
     assert any("#" in line for line in lines)
-    assert "REVMAMAD v3.0.0" in lines
+    assert "REVMAMAD v3.1.0" in lines
 
 
 def make_result(server, *, success, failure=FailureReason.NONE, latency=100):

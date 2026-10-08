@@ -1,6 +1,8 @@
 # Public source catalog
 
-REVMAMAD ships **60 distinct enabled remote MTProto URLs**, one manual MTProto list, and **64 distinct enabled Web proxy feed URLs** in [config/sources.yaml](../config/sources.yaml). Distinct URLs can share publishers or proxy endpoints. They are discovery inputs; availability is checked on each scan.
+REVMAMAD ships **51 distinct enabled remote MTProto URLs**, one manual MTProto list, and **64 enabled HTTP/SOCKS feed URLs** in [config/sources.yaml](../config/sources.yaml). Distinct feeds can share publishers or proxy endpoints. They are discovery inputs; availability is checked on each scan.
+
+The `mtproto` and `telegram` scan modes share the same `sources` catalog and MTProto protocol checks. Telegram mode presents Telegram share links; it does not create a separate source catalog or an account-login test. The `web` mode reads `web_sources` for HTTP, HTTPS-to-proxy, SOCKS4 and SOCKS5.
 
 ## Configuration
 
@@ -10,8 +12,8 @@ An explicit list replaces only its own mode's catalog list, including an empty l
 
 ```yaml
 source_catalog: config/sources.yaml
-sources: []       # disable MTProto discovery
-# Web discovery still uses the catalog.
+sources: []       # disable discovery for MTProto and Telegram-link modes
+# HTTP/SOCKS discovery still uses the Web catalog.
 ```
 
 Use `web_sources: []` to disable Web discovery. Older external configs without `source_catalog` load only their explicit sources and retain an empty Web source list. The optional manual list lives in `config/manual_proxies.txt`; credentials are not needed for public feed collection.
@@ -20,30 +22,32 @@ MTProto source types are `github_raw`, `http_txt`, `http_json`, `json_feed`, and
 
 ## MTProto provenance and current source check
 
-The six text feeds are [SoliSpirit](https://github.com/SoliSpirit/mtproto), [Argh94](https://github.com/Argh94/telegram-proxy-scraper), [Surfboardv2ray](https://github.com/Surfboardv2ray/TGProto), [tgmtproxy](https://github.com/tgmtproxy/mtproxy), [darkvibez456](https://github.com/darkvibez456/mtproto-proxy-auto), and [V2RAYCONFIGSPOOL](https://github.com/V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB). We selected one V2RAYCONFIGSPOOL partition as a source, rather than counting ten partitions as ten independent publishers.
+Version 3.1 replaces the 54 direct Telegram previews that failed on the validation network. On 2026-10-08, both `t.me` and `telegram.me` resolved to a private IPv4 address and TCP port 443 refused the connection (`WinError 10061`). HTTP/TLS never started. GitHub raw files completed certificate-verified TLS and HTTP 200 on the same host. This identifies a resolver/network access problem, rather than an MTProto parser or certificate failure. Other networks can behave differently.
 
-The 54 channel identities have primary provenance in [Argh94's MTProto scraper](https://github.com/Argh94/telegram-proxy-scraper/blob/main/Files/main.py), [MTProtoNexus's username catalog](https://github.com/itsyebekhe/MTProtoNexus/blob/main/usernames.json), or the [Darklord2025 MTProto collector catalog](https://github.com/Darklord2025/telegram-proxies-collector/blob/main/telegram%20channels.json). The latter list was last changed in January 2025; channel entries from it remain provisional until a scan obtains usable posts.
+The defaults now use existing files from **16 repositories belonging to 15 publisher accounts**:
 
-On **2026-10-08, 15:47:08–15:47:28 UTC**, the Windows source check obtained:
-
-| Feed | Valid unique candidates in that feed |
+| Dataset group | Enabled feeds |
 | --- | ---: |
-| SoliSpirit | 175 |
-| Argh94 | 262 |
-| Surfboardv2ray | 126 |
-| tgmtproxy | 896 |
-| darkvibez456 | 254 |
-| V2RAYCONFIGSPOOL partition 1 | 6 |
+| [Darklord2025 country datasets](https://github.com/Darklord2025/telegram-proxies-collector/tree/main/countries), plus its aggregate file | 31 |
+| [kort0881 regional datasets](https://github.com/kort0881/telegram-proxy-collector) | 4 |
+| [Therealwh aggregate/regional datasets](https://github.com/Therealwh/MTPproxyLIST) | 3 |
+| Other publisher aggregate feeds | 13 |
 
-These six feeds produced **1,281 candidates after global deduplication**. All 54 direct `t.me/s/` requests returned connection errors from this host; the manual list was empty. This documents host-specific source access and syntax parsing, not Telegram proxy health. Earlier public previews exposed valid direct URLs in NetAccount, alltelegramproxy, hotspotproxy, mtpproxy0098 and proxiteiegram, but previews can be cached.
+The remaining feeds are [SoliSpirit](https://github.com/SoliSpirit/mtproto), [Argh94's scraper](https://github.com/Argh94/telegram-proxy-scraper), [Argh94's MTProto feed](https://github.com/Argh94/Proxy-List/blob/main/MTProto.txt), [Surfboardv2ray](https://github.com/Surfboardv2ray/TGProto), [tgmtproxy](https://github.com/tgmtproxy/mtproxy), [darkvibez456](https://github.com/darkvibez456/mtproto-proxy-auto), [V2RAYCONFIGSPOOL](https://github.com/V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB), [3yed-61](https://github.com/3yed-61/MTP-Collector), [tgproxypink](https://github.com/tgproxypink/telegram-proxy-list), [dubblebyte](https://github.com/dubblebyte/free-mtproto-proxies), [Iliya3ProX](https://github.com/Iliya3ProX/good_proxies), [LoneKingCode](https://github.com/LoneKingCode/free-proxy-db), and [Telegram-FZ-LLC](https://github.com/Telegram-FZ-LLC/Telegram-Proxy). Publisher names are repository accounts, not a claim of official Telegram affiliation.
 
-ALIILAPRO and SoliSpirit had identical contents during research, so only SoliSpirit is enabled. An old MhdiTaheri feed yielded one valid record and was excluded from defaults. The former hookzof MTProto JSON path now contains a website pointer, so it is also excluded. Profile-only, empty and invite-only previews were excluded where observed.
+Country/region files are separately published datasets, not independently operated proxy networks. Only one V2RAYCONFIGSPOOL partition is included. Additional pool partitions, IPv4/IPv6 output variants, seven empty files and seven exact normalized mirrors were excluded from the researched candidates. The tgmtproxy repository publishes an aggregate, not per-channel mirror files.
 
-## Web feed provenance and transport interpretation
+On **2026-10-08, 18:46:30–18:46:34 UTC**, the actual configured Collector fetched all **51/51 remote feeds** successfully. Each yielded parser-valid candidates, and all 51 normalized candidate sets were distinct. After global deduplication, collection returned **2,303 candidates**; the manual file was empty. This is a source-access and syntax-parsing check, not a proxy health test or a promise of future availability.
+
+Public channel previews remain supported for custom configs. They are no longer required by the default catalog. TLS verification stays enabled; the application does not change system DNS settings.
+
+## HTTP/SOCKS feed provenance and transport interpretation
 
 The 64 selected feeds came from 19 publisher accounts. Research obtained nonempty file contents and checked endpoint sets; exact normalized mirrors and empty feeds were excluded. The catalog covers HTTP, HTTPS-capable HTTP lists, explicit TLS-to-proxy lists, SOCKS4 and SOCKS5.
 
 Primary feed repositories include [proxifly](https://github.com/proxifly/free-proxy-list), [monosans](https://github.com/monosans/proxy-list), [Databay Labs](https://github.com/databay-labs/free-proxy-list), [Moleway](https://github.com/Moleway/Free-Proxy-List), [relayglass](https://github.com/relayglass/free-proxy-list), [litportnet](https://github.com/litportnet/free-proxy-list), [roosterkid](https://github.com/roosterkid/openproxylist), [ShiftyTR](https://github.com/ShiftyTR/Proxy-List), [vakhov](https://github.com/vakhov/fresh-proxy-list), [jetkai](https://github.com/jetkai/proxy-list), [ErcinDedeoglu](https://github.com/ErcinDedeoglu/proxies), [Zaeem20](https://github.com/Zaeem20/FREE_PROXIES_LIST), and [IPLocate](https://github.com/iplocate/free-proxy-list). Every concrete raw URL is in the YAML catalog.
+
+The unchanged HTTP/SOCKS catalog was fetched again on **2026-10-08, 18:48:26–18:48:41 UTC**: all **64/64 feeds** yielded valid candidates, with **163,372 unique candidates** after global deduplication. Counts were 70,821 HTTP, 2,101 HTTPS-to-proxy, 22,672 SOCKS4 and 67,778 SOCKS5. This check retrieved and parsed source files; it did not probe the endpoints.
 
 A filename containing `https` often means an HTTP proxy that supports CONNECT to an HTTPS destination. Such bare endpoints use `protocol: http`. Explicit `https://` endpoint URIs retain TLS to the proxy. Databay's `https.txt` is configured as `https` because its primary README explicitly identifies TLS to the proxy. IPLocate's example alone provides weaker evidence, so its bare HTTPS group retains the conservative HTTP default.
 
@@ -59,4 +63,4 @@ Collectors expose `source_reports` in enabled configuration order:
 
 Counts are per-source unique candidates before global deduplication. Disabled sources have no report. Source failures are isolated; a completed empty collection resets its reports. MTProto cancellation does not publish incomplete reports.
 
-Both modes retain **4 MiB per source** and **eight concurrent source reads**. URLs or underlying exception strings containing private feed credentials are not included in error detail. More feeds do not guarantee more distinct or working endpoints; final protocol tests and source health are shown separately.
+Both collectors retain **4 MiB per source** and **eight concurrent source reads**. URLs or underlying exception strings containing private feed credentials are not included in error detail. More feeds do not guarantee more distinct or working endpoints; final protocol tests and source health are shown separately.

@@ -1,5 +1,6 @@
 """Catalog fallback and explicit overrides must remain independent per mode."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -151,3 +152,34 @@ def test_publisher_declared_tls_feed_keeps_tls_for_bare_endpoints():
     )
     proxies = parse_text_blob("198.51.100.3:8443", source.name, source.protocol)
     assert [proxy.uri() for proxy in proxies] == ["https://198.51.100.3:8443"]
+
+
+def test_default_mtproto_collection_succeeds_when_direct_telegram_access_is_blocked(monkeypatch):
+    """Defaults must collect every remote feed without needing the blocked t.me host."""
+    import httpx
+
+    from collector.collector import Collector
+
+    fixture_path = Path(__file__).parent / "fixtures" / "mtproto_mirror_samples.json"
+    samples = json.loads(fixture_path.read_text(encoding="utf-8"))
+    config = AppConfig.load()
+    remote = [source for source in config.sources if source.enabled and not source.url.startswith("file://")]
+    client_type = httpx.AsyncClient
+
+    def public_feed(request):
+        if request.url.host in {"t.me", "telegram.me"}:
+            raise httpx.ConnectError("Resolver routes Telegram to a refused private address", request=request)
+        captured = samples["feeds"].get(str(request.url))
+        if captured is None:
+            return httpx.Response(404)
+        return httpx.Response(200, text=captured["body"])
+
+    transport = httpx.MockTransport(public_feed)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client_type(transport=transport, **kwargs))
+    collector = Collector(config)
+    proxies = collector.collect()
+    report_by_name = {report["name"]: report for report in collector.source_reports}
+    reports = [report_by_name[source.name] for source in remote]
+    assert len(reports) >= 50
+    assert all(report["status"] == "ok" and report["count"] > 0 for report in reports)
+    assert len(proxies) == samples["unique_sample_candidates"]

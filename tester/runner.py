@@ -8,6 +8,7 @@ import os
 
 from config.loader import AppConfig
 from tester.mtproto import test_proxy_once
+from utils.interruption import ScanInterrupted
 from utils.logger import progress_bar
 from utils.models import Proxy, ProxyResult
 
@@ -32,9 +33,11 @@ def worker_count(requested: int, candidates: int) -> int:
 class ParallelTester:
     def __init__(self, config: AppConfig):
         self.config = config
+        self.partial_results: list[ProxyResult] = []
 
-    async def _test_one(self, proxy: Proxy) -> ProxyResult:
-        result = ProxyResult(proxy=proxy)
+    async def _test_one(self, proxy: Proxy, result: ProxyResult | None = None) -> ProxyResult:
+        if result is None:
+            result = ProxyResult(proxy=proxy)
         for _ in range(max(1, self.config.testing.retries)):
             sample = await test_proxy_once(
                 proxy,
@@ -45,6 +48,7 @@ class ParallelTester:
         return result
 
     async def run_async(self, proxies: list[Proxy]) -> list[ProxyResult]:
+        self.partial_results = []
         if not proxies:
             return []
         workers = worker_count(self.config.testing.workers, len(proxies))
@@ -55,7 +59,8 @@ class ParallelTester:
         async def worker() -> None:
             # next() occurs before await: each worker takes a distinct candidate.
             for index, proxy in pending:
-                results[index] = await self._test_one(proxy)
+                result = results[index] = ProxyResult(proxy)
+                await self._test_one(proxy, result)
                 bar.update(1)
 
         tasks = [asyncio.create_task(worker()) for _ in range(workers)]
@@ -67,10 +72,19 @@ class ParallelTester:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             bar.close()
+            self.partial_results = [
+                ProxyResult(result.proxy, list(result.samples), result.score)
+                for result in results
+                if result is not None and result.samples
+            ]
         completed = [result for result in results if result is not None]
         healthy = sum(result.success_rate > 0 for result in completed)
         logger.info("Tested %d proxies: %d returned a valid MTProto response", len(completed), healthy)
         return completed
 
     def run(self, proxies: list[Proxy]) -> list[ProxyResult]:
-        return asyncio.run(self.run_async(proxies))
+        self.partial_results = []
+        try:
+            return asyncio.run(self.run_async(proxies))
+        except (KeyboardInterrupt, asyncio.CancelledError) as interrupted:
+            raise ScanInterrupted(self.partial_results) from interrupted

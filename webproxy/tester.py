@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from utils.interruption import ScanInterrupted
 from utils.models import FailureReason, ProxyResult, TestSample
 from webproxy.models import WebProxy
 
@@ -248,9 +249,11 @@ class WebTester:
         self.target_url = target_url
         self.expected_status = expected_status
         self.ssl_context = ssl_context
+        self.partial_results: list[ProxyResult] = []
 
-    async def _test_one(self, proxy: WebProxy) -> ProxyResult:
-        result = ProxyResult(proxy)
+    async def _test_one(self, proxy: WebProxy, result: ProxyResult | None = None) -> ProxyResult:
+        if result is None:
+            result = ProxyResult(proxy)
         settings = self.config.testing
         for _ in range(max(1, settings.retries)):
             sample = await test_proxy_once(
@@ -265,6 +268,7 @@ class WebTester:
         return result
 
     async def run_async(self, proxies: list[WebProxy]) -> list[ProxyResult]:
+        self.partial_results = []
         if not proxies:
             return []
         from tester.runner import worker_count
@@ -277,7 +281,8 @@ class WebTester:
 
         async def worker() -> None:
             for index, proxy in pending:
-                results[index] = await self._test_one(proxy)
+                result = results[index] = ProxyResult(proxy)
+                await self._test_one(proxy, result)
                 bar.update(1)
 
         tasks = [asyncio.create_task(worker()) for _ in range(workers)]
@@ -289,7 +294,16 @@ class WebTester:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             bar.close()
+            self.partial_results = [
+                ProxyResult(result.proxy, list(result.samples), result.score)
+                for result in results
+                if result is not None and result.samples
+            ]
         return [result for result in results if result is not None]
 
     def run(self, proxies: list[WebProxy]) -> list[ProxyResult]:
-        return asyncio.run(self.run_async(proxies))
+        self.partial_results = []
+        try:
+            return asyncio.run(self.run_async(proxies))
+        except (KeyboardInterrupt, asyncio.CancelledError) as interrupted:
+            raise ScanInterrupted(self.partial_results) from interrupted

@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from dashboard import data
 
-app = FastAPI(title="REVMAMAD — Proxy Radar", version="3.0.0")
+app = FastAPI(title="REVMAMAD — Proxy Radar", version="3.1.0")
 OUTPUT_FOLDER = Path(os.environ.get("REVMAMAD_OUTPUT_FOLDER", data.DEFAULT_OUTPUT_FOLDER))
 DATA_FILE = data.DEFAULT_DATA_FILE  # compatibility for v2 integrations
 ASSETS = Path(__file__).resolve().parent
@@ -28,17 +28,17 @@ def _api(route: str, request: Request):
 
 
 @app.get("/api/snapshot")
-def api_snapshot(request: Request, mode: Literal["mtproto", "web"] = "mtproto"):
+def api_snapshot(request: Request, mode: Literal["mtproto", "telegram", "web"] = "mtproto"):
     return _api("/api/snapshot", request)
 
 
 @app.get("/api/proxies")
-def api_proxies(request: Request, mode: Literal["mtproto", "web"] = "mtproto"):
+def api_proxies(request: Request, mode: Literal["mtproto", "telegram", "web"] = "mtproto"):
     return _api("/api/proxies", request)
 
 
 @app.get("/api/stats")
-def api_stats(request: Request, mode: Literal["mtproto", "web"] = "mtproto"):
+def api_stats(request: Request, mode: Literal["mtproto", "telegram", "web"] = "mtproto"):
     return _api("/api/stats", request)
 
 

@@ -1,0 +1,313 @@
+{
+  "recorded_at_utc": "2026-10-08T18:43:10.774610+00:00",
+  "note": "Short samples of actual retrieved public MTProto feeds; URL mapping is independent research evidence, not generated from product catalog. Endpoint health was not tested.",
+  "unique_sample_candidates": 113,
+  "feeds": {
+    "https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt": {
+      "body": "tg://proxy?server=vahshianeh.ghodratitarin.info&port=7799&secret=dd10400103324995b07c030386e886e7f1\ntg://proxy?server=cocorichmond.pareporeh.info&port=7799&secret=dd10400103324995b07c030386e886e7f1\ntg://proxy?server=recordzan.herfeibash.info&port=7799&secret=dd10400103324995b07c030386e886e7f1",
+      "captured_candidates": 175,
+      "source_bytes_sha256": "4fc96aba4e264490ae3896fdeeb2ecd78334386cab30b68a51d3d94a2ed2b885",
+      "candidate_set_sha256": "48dff04687eb449acd3e8f6d2eada472da6a94cc8550b8e401c05b5e76c851ad"
+    },
+    "https://raw.githubusercontent.com/Argh94/telegram-proxy-scraper/main/proxy.txt": {
+      "body": "tg://proxy?server=dizgrakh.mamadali.co.uk&port=4455&secret=dd104462821249bd7ac519130220c25d09\ntg://proxy?server=167.233.135.233&port=8443&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=nocloudnew.co.uk&port=8443&secret=79e344818749bd7ac519130220c25d09",
+      "captured_candidates": 258,
+      "source_bytes_sha256": "1017e570704ee4b3fb76735b258c97a63391a0a59f8966e64722c9d4b1387ee7",
+      "candidate_set_sha256": "78f6fb4d09522660b818b7a65b1f84233bd7de0557534d3fa097d563a3dd6afc"
+    },
+    "https://raw.githubusercontent.com/Surfboardv2ray/TGProto/main/proxies.txt": {
+      "body": "tg://proxy?server=116.202.185.20&port=8443&secret=dd104462821249bd7ac519130220c25d09\ntg://proxy?server=116.203.11.161&port=443&secret=dd104462821249bd7ac519130220c25d09\ntg://proxy?server=116.203.12.228&port=8443&secret=dd104462821249bd7ac519130220c25d09",
+      "captured_candidates": 126,
+      "source_bytes_sha256": "bb3d03a3cb3394dae13886183a8f8b4d8ede26b693960103788d058b48815232",
+      "candidate_set_sha256": "8e3d966b44b311ab072eb8ec24a4a199e5960992442fefa53f49e29384452660"
+    },
+    "https://raw.githubusercontent.com/tgmtproxy/mtproxy/main/proxies.txt": {
+      "body": "tg://proxy?server=pulse.lite64.click&port=443&secret=eee418f291b6279b0f441469b2d05e5a7e6c69746536342e73697465\ntg://proxy?server=spruce.lite64.xyz&port=443&secret=eee418f291b6279b0f441469b2d05e5a7e6c69746536342e73697465\ntg://proxy?server=lumen.lite64.click&port=443&secret=eee418f291b6279b0f441469b2d05e5a7e6c69746536342e73697465",
+      "captured_candidates": 894,
+      "source_bytes_sha256": "4dee061e123b80675a48532b974524b7a975a8a8fa75de3e2d02b9a282e84d10",
+      "candidate_set_sha256": "77ee04f4d9840f12f21f00629365544f6cce67ff953b590161c4d197f61b329b"
+    },
+    "https://raw.githubusercontent.com/darkvibez456/mtproto-proxy-auto/main/proxies.txt": {
+      "body": "tg://proxy?server=dizgrakh.mamadali.co.uk&port=4455&secret=dd104462821249bd7ac519130220c25d09\ntg://proxy?server=7gh.ir.ir.ir.meli-n12.info&port=8443&secret=dd104462821249bd7ac519130220c25d09\ntg://proxy?server=nasho.poolaki.co.uk&port=8443&secret=104462821249bd7ac519130220c25d09",
+      "captured_candidates": 254,
+      "source_bytes_sha256": "fe27471d6c6b6462b1af4500942d97c2ec6db21241ce82e228843fe7c76d0838",
+      "candidate_set_sha256": "2572779814ed371170f9e49406e22a1f4a97fec82ab02050c334060c9c358c7b"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/at/proxies": {
+      "body": "tg://proxy?server=185.104.63.194&port=779&secret=ddec742282124f04d318551341ead76457\ntg://proxy?server=185.104.63.194&port=779&secret=ec742282124f04d318551341ead76457\ntg://proxy?server=185.104.63.195&port=779&secret=ec742282124f04d318551341ead76457",
+      "captured_candidates": 3,
+      "source_bytes_sha256": "d3f465f3e4dfb692d583a4797e98995dcc52e61f5a2bf089a98f989138931c63",
+      "candidate_set_sha256": "ba5bccc5293bdd0560f45be340194576c6e1d2afcbe019c6fc652aa5ff1145e2"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/au/proxies": {
+      "body": "tg://proxy?server=172.105.191.17&port=3443&secret=ee082082082082082082082082082082087472616e736c6174652e676f6f",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "d8ec362bfc7ff43d1f953d4c96e7097edd8561838711328d0b3bbca40450672b",
+      "candidate_set_sha256": "1c84028e17f5e4ec4e9dcb79968b420a598c7a4df8c54a4f9972d3c1c4fe2584"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/br/proxies": {
+      "body": "tg://proxy?server=172.233.11.241&port=3443&secret=ee082082082082082082082082082082087472616e736c6174652e676f6f",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "2ebeab9f76ff547d04000587bb950c56e8d007c69c13173258d6e001e0c0b9a4",
+      "candidate_set_sha256": "87f79f0fde742462939f74946f9da3d97cadf035b02301cf96beab1971ff9f6b"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/ca/proxies": {
+      "body": "tg://proxy?server=172.105.5.107&port=3443&secret=ee082082082082082082082082082082087472616e736c6174652e676f6f",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "3b5ef72869c22abd8896900ec9b4e6c7ab43917d923c34418dc5c11727540eea",
+      "candidate_set_sha256": "8eb99d028eb4919681f96f07fa6af0761f952997859030b1f7798eb71b1edc69"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/ch/proxies": {
+      "body": "tg://proxy?server=195.15.253.54&port=443&secret=ee97a1dc7b6a4c0822d2b24837644e9522636c6f7564696e6172792e636f6d\ntg://proxy?server=37.156.46.199&port=443&secret=d77db43ee3721f0fcb40a4ff63b5cd27\ntg://proxy?server=37.156.46.238&port=443&secret=79e462821249bd7ac519130220c25d09",
+      "captured_candidates": 4,
+      "source_bytes_sha256": "0b987b8ce00ffb060df4a38172b8ea496a97ddcf657ea8b893c12f90e718e4b9",
+      "candidate_set_sha256": "af59d9d8f7acc719fc43513a9bbee1aea251feb26cab5e3bef2a7d05e3b03118"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/cn/proxies": {
+      "body": "tg://proxy?server=120.226.29.56&port=55858&secret=ee763c1bb6d39855e4b03faad8ca93e680617a7572652e6d6963726f736f66742e636f6d",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "24847e9dec4d8e06f9f1f44fb16a51c745edf2819d19ebc615160cb5d9609be2",
+      "candidate_set_sha256": "d3bc4a3b00594de6ea4bdc9392dba8c91c2e2f946c632115353d8bc096fdfb01"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/cy/proxies": {
+      "body": "tg://proxy?server=45.128.52.26&port=2096&secret=ee6fada74059e8d9bb144aed34817a85fa7a756c612e6972",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "f651f4bb0346c4a9cf8c589ab39f359b4e44e4cc1ad1809589073864c4b69873",
+      "candidate_set_sha256": "882b55786bc83e3fecefa10e26ab99508dff6ece808699481667b93e7bb2a505"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/cz/proxies": {
+      "body": "tg://proxy?server=185.53.46.47&port=15&secret=ee7209c4f45e1a4ed803e4ee647cc0151e73332e616d617a6f6e6177732e636f6d\ntg://proxy?server=185.53.46.47&port=15&secret=dd7209c4f45e1a4ed803e4ee647cc0151e",
+      "captured_candidates": 2,
+      "source_bytes_sha256": "645cf1ff6515cfc44937bc5461197ec44afd1eef9c2a3d49119d4169c5b6a809",
+      "candidate_set_sha256": "d9528062d614dcdc3d5455d007de401d749c5299c59ada55f3f9ede4d88902cc"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/de/proxies": {
+      "body": "tg://proxy?server=116.202.0.203&port=443&secret=ee2c9935dcec47525aeb6d559d4bdd5a597777772e7370656564746573742e6e6574\ntg://proxy?server=116.202.221.215&port=8443&secret=0c30628212cbbd7ac519130205525d15\ntg://proxy?server=116.202.80.36&port=443&secret=1603010200010001fc030386e24c3add",
+      "captured_candidates": 206,
+      "source_bytes_sha256": "8bc42eeabc669c052270eb630efc740044aa3e6d630fc7abdddef03c5adbce25",
+      "candidate_set_sha256": "3fccaea4324e8eb55c4cd27aafaec39629b024800df3479aedebf6e8d0cdf0e0"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/es/proxies": {
+      "body": "tg://proxy?server=108.181.121.220&port=443&secret=104462821249bd7ac519130220c25d09\ntg://proxy?server=108.181.121.242&port=8443&secret=104344818749bd7ac519130220c25d09\ntg://proxy?server=108.181.121.245&port=8443&secret=104344818749bd7ac519130220c25d09",
+      "captured_candidates": 13,
+      "source_bytes_sha256": "cc6063d5d09c0d84d739ae9f09f606805d6eb881f556b7d3a8f58f1eca25dd14",
+      "candidate_set_sha256": "9c1da662293eb89499bd4ed7b9a0f7fc11785ed5c8932630294f44defe9a8a3a"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/fi/proxies": {
+      "body": "tg://proxy?server=135.181.16.161&port=155&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=135.181.16.171&port=155&secret=1603010200010001fc030386e24c3add\ntg://proxy?server=135.181.253.202&port=70&secret=79e462821249bd7ac519130220c25d09",
+      "captured_candidates": 63,
+      "source_bytes_sha256": "34c4fdde16397a4a3f15e6fe719f2bed6131e1a39d3f10ec8fa9829b9bd88525",
+      "candidate_set_sha256": "4b3fbfc1a43017c55b89f02ee9c63c9f17c1605e3885c7a445c37b5e598fc7cb"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/fr/proxies": {
+      "body": "tg://proxy?server=185.231.205.191&port=15&secret=ee1bb5b4bc5681ed6b31820f2f22c772da696e7465726e657468616265722e636f6d\ntg://proxy?server=185.231.205.191&port=15&secret=dd1bb5b4bc5681ed6b31820f2f22c772da\ntg://proxy?server=51.159.149.220&port=8000&secret=eee72cf91a4fee7902896720b31c3c14e27777772e736974652e636f6d",
+      "captured_candidates": 6,
+      "source_bytes_sha256": "67003048c054a544c3d1755f72c78b57f690309b9ca38be865b6c7ec14f9a412",
+      "candidate_set_sha256": "09cc307b40ddd084e449784f0051a2dd9cbd539a6eb87a97e50ea2d036a4b311"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/gb/proxies": {
+      "body": "tg://proxy?server=146.103.53.96&port=333&secret=ee7c92753d20a40e038bc1599c93830fd0617a7572652e6d6963726f736f66742e636f6d\ntg://proxy?server=209.38.160.30&port=23&secret=eee483cdf29d58eb9c25ad1739371fd96e7777772e7a756c612e69722e616e74656e2e69722e66616e617661722e636f2e75742e61632e6972\ntg://proxy?server=46.101.36.174&port=23&secret=eee483cdf29d58eb9c25ad1739371fd96e7777772e7a756c612e69722e616e74656e2e69722e66616e617661722e636f2e75742e61632e6972",
+      "captured_candidates": 15,
+      "source_bytes_sha256": "d14cad931c1e542ff53b7c29c4814a1aaa3ef455fe6916edea8a6732e9d16afa",
+      "candidate_set_sha256": "948475c72fbd3ed0897e575339be3c9ac2a9cd8c4aa98fb4f4c26da06d3673cf"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/hk/proxies": {
+      "body": "tg://proxy?server=103.161.34.109&port=28&secret=79e462821249bd7ac519130220c25d09\ntg://proxy?server=103.161.34.112&port=28&secret=79e462821249bd7ac519130220c25d09\ntg://proxy?server=103.161.34.195&port=155&secret=79e344818749bd7ac519130220c25d09",
+      "captured_candidates": 8,
+      "source_bytes_sha256": "334c0b63938a6b447d061126a1fcc3536d1e010af77a14b9777753b9f5d45088",
+      "candidate_set_sha256": "6085c0773318a4637eed0d77aaa7b36a4644e80b993079b113d77e0f61d4574a"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/hu/proxies": {
+      "body": "tg://proxy?server=91.219.237.149&port=888&secret=79e344818749bd7ac519130220c25d09",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "1a0efb9adc303677d23af0f17eb9221a83537271ee674f50c0147eed48e0bad8",
+      "candidate_set_sha256": "23c4e6d293776e10c1910762c2780c3484a4f2a1735e2210f0ec7660bbbc409c"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/in/proxies": {
+      "body": "tg://proxy?server=45.79.123.247&port=23&secret=dd22f034eb584a2d035a8685289634cb0e",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "2ee059c7b45bc2a60d6b65f19302f6093cd9eff363e23ff7f98c3c2433cdfab4",
+      "candidate_set_sha256": "24f4e8b452f222e553429c88dfff0c829543188e56ef364d6bbd7a54e88c5a4f"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/ir/proxies": {
+      "body": "tg://proxy?server=2001%3A4188%3A2%3A600%3A10%3A10%3A34%3A34&port=7&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=2001%3A4188%3A2%3A600%3A10%3A10%3A34%3A34&port=70&secret=d77db43ee3721f0fcb40a4ff63b5cd27\ntg://proxy?server=2001%3A4188%3A2%3A600%3A10%3A10%3A34%3A34&port=443&secret=1603010200010001fc030386e24c3add",
+      "captured_candidates": 9,
+      "source_bytes_sha256": "17e02f7d8e9ed49adb97e8962cb6da1685ac7b11361dc279d626143d7978af4c",
+      "candidate_set_sha256": "f13d9a98f80f49ec702a6c569977fcf826fb60ce4bb920be8bbb86b4fb396803"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/it/proxies": {
+      "body": "tg://proxy?server=172.232.211.204&port=3443&secret=ee082082082082082082082082082082087472616e736c6174652e676f6f",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "c493c254d47ee4749ee8873dab51a7369c46e274c8bfa9c8c47ebbe85dae984d",
+      "candidate_set_sha256": "ae5c4e7a16bb9cbb77edca1aa75f781877b69514efa30178d989b7910285f354"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/jp/proxies": {
+      "body": "tg://proxy?server=38.180.28.68&port=42917&secret=ee15468683ef9d434b6f17b62df757b7637777772e50617950616c2e636f6d",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "4481c91c61214f7f4c05324d85c2d9da31d422907a273106f4befa3d54f26e22",
+      "candidate_set_sha256": "bb91b0001bc6583e7389b6a3959a8af6db4cd0b21454fa3fde5d6ea637d72886"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/lt/proxies": {
+      "body": "tg://proxy?server=14.102.10.129&port=8443&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=14.102.10.141&port=8443&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=14.102.10.142&port=8443&secret=79e344818749bd7ac519130220c25d09",
+      "captured_candidates": 14,
+      "source_bytes_sha256": "32587dbc0a68a029a6c55fd8ecd048578b2a9ff599a0dbc494ab81e02e6ace32",
+      "candidate_set_sha256": "f550cca2752fa89347da575991c98e18504612300f1755a31d1b08197958fbaa"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/lu/proxies": {
+      "body": "tg://proxy?server=107.189.29.194&port=45&secret=ee390eaa83caa7fae172a90c2abdba1f2e7777772e63646e2e636c6f7564666c6172652e636f6d",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "b751435ea1891d8f517581d793f73241acb9baaea37e0c515541bad2be944d38",
+      "candidate_set_sha256": "1c650967ea6db3e654436fbee18f98f5cfae7498297c96145d76c7b8292c55b4"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/lv/proxies": {
+      "body": "tg://proxy?server=213.21.232.149&port=443&secret=dd1603010200010001fc030386e24c3add\ntg://proxy?server=213.21.232.149&port=443&secret=1603010200010001fc030386e24c3add",
+      "captured_candidates": 2,
+      "source_bytes_sha256": "4098a5ed9027adb409d9c5cda7b39e4cd3c6089587ef2492b5e1ef4f3b4d35b2",
+      "candidate_set_sha256": "4fbd79a5aad8b02a7b4dc01a111e170d107e299727fd8d01e053e1c309e82b59"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/md/proxies": {
+      "body": "tg://proxy?server=86.104.74.139&port=443&secret=eef7c2b8d3a4e9f1b5c6d8a7e3f2b9c4a17a756c612e6972",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "e0d6c3558385f8f51c5875026d37097e105f5125fd764ffe31f38be0a8f4c2c2",
+      "candidate_set_sha256": "d2a6beed924aa4023df8dccbb7e8c6424a02f7f2196d04e5435de3655f7f8dc5"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/nl/proxies": {
+      "body": "tg://proxy?server=108.181.122.215&port=3443&secret=0c30628212cbbd7ac519130205525d15\ntg://proxy?server=108.181.123.49&port=3443&secret=0c30628212cbbd7ac519130205525d15\ntg://proxy?server=108.181.128.201&port=3443&secret=0c30628212cbbd7ac519130205525d15",
+      "captured_candidates": 33,
+      "source_bytes_sha256": "19748ec4122679528fca55ae43df0d5e69786b344ae6a30f3a235015f067f3c0",
+      "candidate_set_sha256": "2d63eae1633f7b030898c9e78c5317ea36f087efb8dd3724429856e9d859c8f2"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/ro/proxies": {
+      "body": "tg://proxy?server=46.229.253.77&port=8888&secret=1603010200010001fc030386e24c3add",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "0decf22d291a2962374b582aee12daa4bdad74ae57e554d2eb1a3364d5cf9522",
+      "candidate_set_sha256": "215eeb1083b55b301f7c7f208b774cfb9c24b19d96302d84a07927602ceb59a0"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/ru/proxies": {
+      "body": "tg://proxy?server=109.172.85.219&port=443&secret=79e462821249bd7ac519130220c25d09\ntg://proxy?server=109.248.163.201&port=2938&secret=ee503b6941e907f5723f180aba1561276e73332e676f6f676c652e636f6d\ntg://proxy?server=178.20.43.228&port=443&secret=79e462821249bd7ac519130220c25d09",
+      "captured_candidates": 95,
+      "source_bytes_sha256": "5671b599cd98add33f082c0e570e08e5edb98d9108ef1745f686490fa14fb6bc",
+      "candidate_set_sha256": "089c8bcd9008813bd1b4676618a74d4474524f56b21948f472c76df9653809ee"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/se/proxies": {
+      "body": "tg://proxy?server=172.232.134.232&port=7943&secret=ee082082082082082082082082082082087472616e736c6174652e676f6f",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "c9937a43a1cb24476f7011870da91dfb7db2e343999ca15b8fac7a61e333d6e9",
+      "candidate_set_sha256": "3392802b5b481c5f03d9deee34bd681c6930978c0d4debc511dce573638944cd"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/sg/proxies": {
+      "body": "tg://proxy?server=13.250.47.198&port=8633&secret=eeeaee92818cc06fe2abf69eb66dbc390e6177732e616d617a6f6e2e636f6d",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "243ff8d27616aeaf8f1afc78981feccf68159378dcb5416face7254c4dd11bc4",
+      "candidate_set_sha256": "f3149cdd903cdfa75cf145f6503bd511d558f056a6168aab37097e50bb91527d"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/tr/proxies": {
+      "body": "tg://proxy?server=77.92.154.235&port=2096&secret=1603010200010001fc030386e20c1add",
+      "captured_candidates": 1,
+      "source_bytes_sha256": "4dbe81927cb506109ccc79af3c27b6249354e2ec2fcc74a9362dcde3510ce1aa",
+      "candidate_set_sha256": "64f19033a5bd4b6b786d76e0836f769e968dd8225e242a154624c1c85e13cb86"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/countries/us/proxies": {
+      "body": "tg://proxy?server=104.238.180.203&port=80&secret=ee00000000000000000000000000000000696f2e696f\ntg://proxy?server=104.238.180.203&port=443&secret=ee00000000000000000000000000000000646c2e676f6f676c652e636f6d\ntg://proxy?server=147.182.183.207&port=8443&secret=ee01f010a10c0d0e0d101e100101ffaeee7265736561726368676174652e6e6574",
+      "captured_candidates": 29,
+      "source_bytes_sha256": "4256be6d790f1dbc245efd8a7f5c69c04c45e84ad58da5f2452015b0961d0cea",
+      "candidate_set_sha256": "ea2fb08618ff538a321254d4c42eb9c520eadae7886c2ee2171d9d1ff4750861"
+    },
+    "https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/proxies": {
+      "body": "tg://proxy?server=135.181.16.161&port=155&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=135.181.16.171&port=155&secret=1603010200010001fc030386e24c3add\ntg://proxy?server=135.181.253.202&port=70&secret=79e462821249bd7ac519130220c25d09",
+      "captured_candidates": 500,
+      "source_bytes_sha256": "13c7b1cee831543d9ab1cc4968cca4b1246de9df69470c6a42c7bbbd5b79aa94",
+      "candidate_set_sha256": "cc3c9bb45a96b8d8185888d16e5d65a3f8d7f98745c37868e1987862c5ae69bd"
+    },
+    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB/main/telegram_proxy_no1.txt": {
+      "body": "tg://proxy?server=p42.uk.clazumo.ir&port=8443&secret=ee3f8ff8e102b8b1778367e16aa2b67dba617069322e6272616e63682e696f\ntg://proxy?server=p41.nl.clazumo.ir&port=8443&secret=eebf18f68f966f8b19a9ec1dc5113db42a617069322e6272616e63682e696f\ntg://proxy?server=91.107.140.144&port=443&secret=dd79e7010200010007f0030386e24c3add",
+      "captured_candidates": 6,
+      "source_bytes_sha256": "e20ef156892d86a89b02ca1c916b780fdf260b428feaed8ee5bead76d8d578b0",
+      "candidate_set_sha256": "8b98c0449db4f788e92797dba184ab80b3c7990a4157f9426ccf1befb2107190"
+    },
+    "https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_ru.txt": {
+      "body": "tg://proxy?server=31.58.87.179&port=443&secret=ee44bba5fdde571acf4dd7ffe839c20f5b6d2e6265626f6f2e7275\ntg://proxy?server=72.56.102.104&port=443&secret=eed8223b129a62eafcdafc08c4513e6d0531632e7275\ntg://proxy?server=217.138.215.102&port=443&secret=ee8357954a3df5c26e32a7b8a7978c3f107777772e636974696c696e6b2e7275",
+      "captured_candidates": 99,
+      "source_bytes_sha256": "e2db35c305026c88c4ed0ea8468fd5548eaeb1efb2877fd5c54bbd0766e9b4f7",
+      "candidate_set_sha256": "8a92fd28023eb7843521fb1e76a4892ab2421dfbb3465bd5be224ae903b7eb36"
+    },
+    "https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_eu.txt": {
+      "body": "tg://proxy?server=95.182.91.199&port=443&secret=ee197f462f1b8d59a053ea0a90fe6cd66073352e646967696b616c612e636f6d\ntg://proxy?server=mash.drproxy.pro&port=443&secret=dda5a7b5711e648c7bd534e4e87de2241b\ntg://proxy?server=qeshm.island.ir.igakwvwa.info&port=7443&secret=1603010200010001fc030386e24c3add",
+      "captured_candidates": 89,
+      "source_bytes_sha256": "39f9129ae6a2f4c0eca1c06bc649dacddef3a8cb5da805e965c5ac47aa404f99",
+      "candidate_set_sha256": "db71ce891a06da94d28f0461e041b20a51dec337690a7e1acd08d8a5509b44a6"
+    },
+    "https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_asia.txt": {
+      "body": "tg://proxy?server=103.161.35.23&port=443&secret=dd79e7010200010007f0030386e24c3add\ntg://proxy?server=103.161.35.56&port=443&secret=dd79e7010200010007f0030386e24c3add",
+      "captured_candidates": 2,
+      "source_bytes_sha256": "dd6a766a8fbb479e647dd58d3994ea92a1bf55ef6edc242bec70c67283cccc0c",
+      "candidate_set_sha256": "afc308a7f2110e26a2de4557efb3f49ac36d611f9563a8601da58473ef10859e"
+    },
+    "https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_us.txt": {
+      "body": "tg://proxy?server=66.33.22.225&port=23318&secret=06bac5484a3d885302fea80a7f890551\ntg://proxy?server=95.182.91.199&port=443&secret=dd197f462f1b8d59a053ea0a90fe6cd660\ntg://proxy?server=95.182.91.199&port=443&secret=197f462f1b8d59a053ea0a90fe6cd660",
+      "captured_candidates": 36,
+      "source_bytes_sha256": "04be26b377e57c87fe27e41359ade808b65fb9ef00476d985a26808a19fa306b",
+      "candidate_set_sha256": "f34ba072819636a87b611236b19d1a99aef001fc603cc450c133decd51d446b2"
+    },
+    "https://raw.githubusercontent.com/3yed-61/MTP-Collector/main/proxy/mtproto.json": {
+      "body": "[{\"server\": \"cocorichmond.pareporeh.info\", \"port\": 7799, \"secret\": \"dd10400103324995b07c030386e886e7f1\", \"source\": \"3yed-61/MTP-Collector/proxy/mtproto.json\", \"tag\": null}, {\"server\": \"at.foltmeingop.co.uk\", \"port\": 8880, \"secret\": \"79e344818749bd7ac519130220c25d09\", \"source\": \"3yed-61/MTP-Collector/proxy/mtproto.json\", \"tag\": null}, {\"server\": \"recordzan.herfeibash.info\", \"port\": 7799, \"secret\": \"dd10400103324995b07c030386e886e7f1\", \"source\": \"3yed-61/MTP-Collector/proxy/mtproto.json\", \"tag\": null}]",
+      "captured_candidates": 31,
+      "source_bytes_sha256": "394fec0d8b64c58c6e70100fbb7a7cde3793811c0a035f70a1d1e1b3374d85ba",
+      "candidate_set_sha256": "3c4748b9a7a6ea65f79eb71b016f6db5ad944c46a63f2c149a18aba629de7e5d"
+    },
+    "https://raw.githubusercontent.com/Argh94/Proxy-List/main/MTProto.txt": {
+      "body": "tg://proxy?server=mio.mozitop.co.uk&port=8443&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=khanda-makoni.lolauth.info&port=8443&secret=1603010200010001fc030386e24c3add\ntg://proxy?server=ir.panhandleflyers.info&port=8443&secret=104462821249bd7ac519130220c8dd09",
+      "captured_candidates": 248,
+      "source_bytes_sha256": "7e92cb1caee6906a59ddee6779298932693874f63dd708150ccee9d9154bfed2",
+      "candidate_set_sha256": "5890f439c121d11e7ad1e56930a1046511067674d02b3b5b4280967c15811acf"
+    },
+    "https://raw.githubusercontent.com/tgproxypink/telegram-proxy-list/main/mtproto.txt": {
+      "body": "tg://proxy?server=ya.zaebalsya.uk&port=8443&secret=ee1104a80139ca104cdb1184484edf78c37275737369616e2d616e696d616c732e7275\ntg://proxy?server=51.158.201.116&port=443&secret=dd083fe0c452e2407d835537872f097c54\ntg://proxy?server=ams1.tlgfast.com&port=443&secret=083fe0c452e2407d835537872f097c54",
+      "captured_candidates": 186,
+      "source_bytes_sha256": "76dab6812f054fb5694b01b56ab77d1612bf8ae85a1f9475a91516c054c845ca",
+      "candidate_set_sha256": "f4583f90872defc7120cff46cbaa3bcd9a477a164385275d8969043639b9d424"
+    },
+    "https://raw.githubusercontent.com/dubblebyte/free-mtproto-proxies/main/all_proxies.txt": {
+      "body": "tg://proxy?server=45.91.138.18&port=443&secret=ee6f81ba440520d90d61497381bf9c829b636c6f75642e6d61696c2e7275\ntg://proxy?server=max.yard-tg-bot.online&port=443&secret=ee526372c4f8c8ade6146df721f700c06663646e2e796172642d74672d626f742e6f6e6c696e65\ntg://proxy?server=m.aysghfkzcxg.info&port=8443&secret=79e344818749bd7ac519130220c25d09",
+      "captured_candidates": 82,
+      "source_bytes_sha256": "d7e774fe9ab570e27210e7752c67b2f58db45770ab76faca673ae61f0eb0e658",
+      "candidate_set_sha256": "6148482491f5a807359065e4f423d405bee568e925fd2725ed167779547154ee"
+    },
+    "https://raw.githubusercontent.com/Iliya3ProX/good_proxies/main/proxies.txt": {
+      "body": "tg://proxy?server=45.159.210.88&port=8443&secret=ee249ff03ce9d855dcbadbbd17e7fba3a879616e6465782e7275\ntg://proxy?server=13.141.56.252&port=4515&secret=eee9a4f23b1d768c04a8d7f39120ca5b6e626973636f7474692e79656b74616e65742e636f6d\ntg://proxy?server=13.141.56.239&port=4515&secret=eee9a4f23b1d768c04a8d7f39120ca5b6e626973636f7474692e79656b74616e65742e636f6d",
+      "captured_candidates": 107,
+      "source_bytes_sha256": "b5f1d49b521488535c43a3fedb25c6fd64d7c2ebbd4b3c00e0f37c0eefd93a79",
+      "candidate_set_sha256": "0335c6baaae5f1a875db08d6ad56ec481f7bced6f8c2a26c63707e41fd87b628"
+    },
+    "https://raw.githubusercontent.com/LoneKingCode/free-proxy-db/main/proxies/mtproto.txt": {
+      "body": "tg://proxy?server=158.247.234.65&port=9443&secret=2adab36179e7a39026adf74034615248\ntg://proxy?server=digitalvpn-proxy.ru&port=6677&secret=73c03865b903152df8e00f8a519ca4a7\ntg://proxy?server=207.148.71.230&port=443&secret=57fead292571e8c81dd4fdf3e9dfc33d",
+      "captured_candidates": 99,
+      "source_bytes_sha256": "0e003f71c1b63249f3b07441f5d585e48c3daf4a22620f7d97a4557665e4e651",
+      "candidate_set_sha256": "5f7290282ddf181060ef59a43bc308b78ca17bb984e36812134bb19a02152489"
+    },
+    "https://raw.githubusercontent.com/Therealwh/MTPproxyLIST/main/verified/proxy_all_tme_verified.txt": {
+      "body": "tg://proxy?server=sftp.khelijefars.co.uk&port=25565&secret=ee1603010200010001fc030386e24c3add6d656469612e737465616d706f77657265642e636f6d\ntg://proxy?server=14.102.10.145&port=8443&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=mimecraft4ir.homes&port=25565&secret=ee1603010200010001fc030386e24c3add626973636f7474692e79656b74616e65742e636f6d",
+      "captured_candidates": 186,
+      "source_bytes_sha256": "fa3ceb2ce503e68fa8ee21bcc4a16730ee5d9081ef3437ac0a565a417eb31f51",
+      "candidate_set_sha256": "d323933bc1d28e77cf71150bf22a4fa54d86c852a65ff647b24f25baf056718e"
+    },
+    "https://raw.githubusercontent.com/Therealwh/MTPproxyLIST/main/verified/proxy_ru_verified.txt": {
+      "body": "tg://proxy?server=132.243.235.188&port=443&secret=eecff01a06513433100e81c6eadff452e779616e6465782e7275\ntg://proxy?server=2.26.98.158&port=443&secret=ee3f354f86e59e2c166c83031772d92d6379612e7275\ntg://proxy?server=night.vtoroe-dyhanie.space&port=443&secret=ee712aff3bb7aa86eefc4eda95d8aef21f79612e7275",
+      "captured_candidates": 3,
+      "source_bytes_sha256": "29a623a4452399f0d6a0ff8e19a6724b30d37930b0136fa641b6780c35c585c5",
+      "candidate_set_sha256": "82b9e5f5b2a61984f847f0a7545fdcf2c54ec0174ded1d853b24478b512a6359"
+    },
+    "https://raw.githubusercontent.com/Therealwh/MTPproxyLIST/main/verified/proxy_eu_verified.txt": {
+      "body": "tg://proxy?server=14.102.10.145&port=8443&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=miinecrafto.com&port=25565&secret=ee1603010200010001fc030386e24c3add626973636f7474692e79656b74616e65742e636f6d\ntg://proxy?server=bomberoo.shop&port=25565&secret=ee1603010200010001fc030386e24c3add626973636f7474692e79656b74616e65742e636f6d",
+      "captured_candidates": 185,
+      "source_bytes_sha256": "350367f051564703cedf738bef44b6bb178519574a29908a5f28e5ecc9cd07fb",
+      "candidate_set_sha256": "565d6d763b4e1e5d929fbe28a1b98b56e1f2e834c9d5c0e29c115821b57021d4"
+    },
+    "https://raw.githubusercontent.com/Telegram-FZ-LLC/Telegram-Proxy/main/proxies.txt": {
+      "body": "tg://proxy?server=3etare.co.uk&port=8443&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=arash-kamangir.ir.igakwvwa.info&port=7443&secret=79e344818749bd7ac519130220c25d09\ntg://proxy?server=lashboy.muzanesghy.co.uk&port=4455&secret=dd104462821249bd7ac519130220c25d09",
+      "captured_candidates": 34,
+      "source_bytes_sha256": "3c617f04bc94f2e9c6887ad16b5253724cef483326bfc1de756545f94b559cfa",
+      "candidate_set_sha256": "a99e0569f4a1878b0b916bd536a8c53f9e44e1c245176ab739b2fae8ae64769a"
+    }
+  }
+}

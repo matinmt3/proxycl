@@ -1,6 +1,7 @@
 "use strict";
 const byId = id => document.getElementById(id);
-const modes = ["mtproto", "web"];
+const modes = ["mtproto", "telegram", "web"];
+const modeLabels = {mtproto: "MTProto", telegram: "Telegram Web Link", web: "HTTP / SOCKS"};
 const protocolNames = {http: "HTTP · HTTPS tunnel", https: "HTTPS · TLS to proxy", socks4: "SOCKS4", socks5: "SOCKS5"};
 const snapshots = new Map();
 let mode = modes.includes(new URLSearchParams(location.search).get("mode")) ? new URLSearchParams(location.search).get("mode") : "mtproto";
@@ -18,19 +19,50 @@ function status(text, error = false) {
   byId("status").classList.toggle("error", error);
 }
 
+function secretIdentity(value) {
+  if (typeof value !== "string" || !value || value.length > 600) return null;
+  value = value.trim();
+  try {
+    let bytes;
+    if (/^[0-9a-f]+$/i.test(value) && value.length % 2 === 0) {
+      bytes = value.match(/../g).map(part => Number.parseInt(part, 16));
+    } else {
+      if (!/^[A-Za-z0-9_+/-]+={0,2}$/.test(value)) return null;
+      const encoded = value.replaceAll("-", "+").replaceAll("_", "/");
+      bytes = Array.from(atob(encoded + "=".repeat((4 - encoded.length % 4) % 4)), character => character.charCodeAt(0));
+    }
+    let valid = bytes.length === 16 || bytes.length === 17 && bytes[0] === 0xdd;
+    if (bytes.length >= 18 && bytes.length <= 199 && bytes[0] === 0xee) {
+      const rawDomain = bytes.slice(17);
+      const domain = String.fromCharCode(...rawDomain);
+      const labels = domain.replace(/\.$/, "").split(".");
+      const ipv4 = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+      valid = rawDomain.every(byte => byte < 128) && domain.length <= 182 && !domain.endsWith("..") && labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label)) && (!/^[0-9.]+$/.test(domain) || ipv4.test(domain));
+    }
+    return valid ? bytes.map(byte => byte.toString(16).padStart(2, "0")).join("") : null;
+  } catch { return null; }
+}
+
 function safeConnection(proxy) {
-  const text = mode === "mtproto" ? proxy.tg_link : proxy.uri;
+  const text = proxy[{mtproto: "tg_link", telegram: "web_link", web: "uri"}[mode]];
   if (typeof text !== "string" || text.length > 2048 || /[\u0000-\u0020]/.test(text)) return null;
   try {
     const parsed = new URL(text);
     const server = String(proxy.server).replace(/^\[|\]$/g, "").toLowerCase();
     if (!Number.isInteger(proxy.port) || proxy.port < 1 || proxy.port > 65535 || parsed.hash || parsed.username || parsed.password) return null;
-    if (mode === "mtproto") {
-      if (parsed.protocol !== "tg:" || parsed.hostname !== "proxy" || parsed.pathname) return null;
+    if (mode !== "web") {
+      if (mode === "telegram") {
+        if (parsed.protocol !== "https:" || parsed.hostname !== "t.me" || parsed.port || parsed.pathname !== "/proxy") return null;
+        if ([...parsed.searchParams.keys()].some(key => !["server", "port", "secret"].includes(key))) return null;
+      } else if (parsed.protocol !== "tg:" || parsed.hostname !== "proxy" || parsed.pathname) return null;
       for (const key of ["server", "port", "secret"]) if (parsed.searchParams.getAll(key).length !== 1) return null;
       const secret = parsed.searchParams.get("secret");
       if (parsed.searchParams.get("server").replace(/^\[|\]$/g, "").toLowerCase() !== server || parsed.searchParams.get("port") !== String(proxy.port)) return null;
-      if (!/^[A-Za-z0-9_+/=-]{16,600}$/.test(secret) || (proxy.secret != null && proxy.secret !== secret)) return null;
+      if (!/^[A-Za-z0-9_+/=-]{16,600}$/.test(secret)) return null;
+      if (mode === "telegram") {
+        const identity = secretIdentity(secret);
+        if (identity === null || secretIdentity(proxy.secret) !== identity) return null;
+      } else if (proxy.secret != null && proxy.secret !== secret) return null;
     } else {
       if (!Object.hasOwn(protocolNames, proxy.protocol) || parsed.protocol !== `${proxy.protocol}:` || parsed.search || !["", "/"].includes(parsed.pathname)) return null;
       const port = parsed.port ? Number(parsed.port) : ({http: 80, https: 443}[proxy.protocol] || 0);
@@ -72,7 +104,7 @@ function resultCard(proxy) {
   const identity = node("div", "", "identity");
   const server = String(proxy.server);
   identity.append(node("b", `${server.includes(":") ? `[${server}]` : server}:${proxy.port}`, "endpoint"));
-  identity.append(node("span", mode === "mtproto" ? "MTProto · response verified" : protocolNames[proxy.protocol] || "Web proxy", "protocol-label"));
+  identity.append(node("span", mode === "mtproto" ? "MTProto · response verified" : mode === "telegram" ? "MTProto · HTTPS share link" : protocolNames[proxy.protocol] || "HTTP / SOCKS proxy", "protocol-label"));
   head.append(identity);
   item.append(head);
   const measures = node("div", "", "result-measures");
@@ -85,13 +117,13 @@ function resultCard(proxy) {
   const connection = safeConnection(proxy);
   if (connection) {
     const actions = node("div", "", "result-actions");
-    if (mode === "mtproto") {
-      const link = node("a", "Connect Telegram", "button primary");
+    if (mode !== "web") {
+      const link = node("a", mode === "telegram" ? "Open Telegram link" : "Connect Telegram", "button primary");
       link.href = connection;
       link.rel = "noreferrer";
       actions.append(link);
     }
-    const copy = node("button", mode === "mtproto" ? "Copy link" : "Copy proxy URI", mode === "mtproto" ? "button quiet" : "button primary");
+    const copy = node("button", mode === "mtproto" ? "Copy link" : mode === "telegram" ? "Copy HTTPS link" : "Copy proxy URI", mode !== "web" ? "button quiet" : "button primary");
     copy.type = "button";
     copy.addEventListener("click", () => copyText(connection, copy));
     actions.append(copy);
@@ -126,7 +158,7 @@ function renderResults(current) {
   byId("empty-state").hidden = visible.rows.length > 0;
   byId("clear-filters").hidden = true;
   let title = "No scan yet";
-  let description = `Choose ${mode === "mtproto" ? "MTProto" : "Web Proxy"} in the terminal, run a scan, then refresh this page.`;
+  let description = `Choose ${modeLabels[mode]} in the terminal, run a scan, then refresh this page.`;
   if (current.state === "corrupt") {
     title = "Saved results need a new scan";
     description = current.message;
@@ -135,8 +167,8 @@ function renderResults(current) {
     description = "Try another endpoint or source, or clear the search and protocol filter.";
     byId("clear-filters").hidden = false;
   } else if (current.state === "ready") {
-    title = "No verified results in this scan";
-    description = "Check source health and failure details above. Try another scan or network; failed candidates are never used to fill the top ten.";
+    title = current.summary.interrupted ? "No verified results before this scan stopped" : "No verified results in this scan";
+    description = current.summary.interrupted ? "Only tested candidates contributed results. Skipped candidates were not tested; run another scan to check them." : "Check source health and failure details above. Try another scan or network; failed candidates are never used to fill the top ten.";
   } else if (current.state === "legacy") {
     title = "No saved legacy results";
     description = "Run a fresh MTProto scan to create results with current verification and scan counts.";
@@ -162,6 +194,12 @@ function render(current, force = false) {
     current = {state: "missing", message: "No scan snapshot loaded.", rows: [], summary: {}, source_reports: []};
   }
   const summary = current.summary;
+  const interrupted = summary.interrupted === true;
+  byId("tested-description").textContent = interrupted ? "Candidates with samples" : "Completed checks";
+  byId("partial-note").hidden = !interrupted;
+  byId("partial-note").textContent = `Stopped scan / partial results. Tested ${count(summary.tested)} of ${count(summary.selected)} selected candidates; ${count(summary.skipped)} skipped. These ranks cover the tested candidates.`;
+  byId("scan-time-label").textContent = interrupted ? "SCAN STOPPED AT" : "LAST COMPLETED SCAN";
+  byId("results-title").textContent = interrupted ? "Verified partial results" : "Top verified results";
   for (const key of ["selected", "tested", "verified"]) byId(`count-${key}`).textContent = count(summary[key]);
   const timestamp = summary.completed_at ? new Date(summary.completed_at) : null;
   if (timestamp && !Number.isNaN(timestamp.getTime())) {
@@ -170,7 +208,7 @@ function render(current, force = false) {
     const minutes = Math.max(0, Math.floor((Date.now() - timestamp.getTime()) / 60000));
     byId("freshness").textContent = minutes < 1 ? "Just completed" : minutes < 60 ? `${minutes} min ago` : `${Math.floor(minutes / 60)} hours ago`;
     byId("freshness").className = minutes >= 60 ? "pill warning" : "pill neutral";
-    byId("scan-meta").textContent = `Requested: ${summary.requested_count == null ? "ALL" : count(summary.requested_count)} · Collected: ${count(summary.collected)} · Eligible: ${count(summary.eligible)}`;
+    byId("scan-meta").textContent = `Requested: ${summary.requested_count == null ? "ALL" : count(summary.requested_count)} · Collected: ${count(summary.collected)} · Eligible: ${count(summary.eligible)} · Skipped: ${count(summary.skipped ?? (summary.selected - summary.tested))}`;
   } else {
     byId("scan-time").textContent = current.state === "legacy" ? "Scan time unknown · v2 results" : "No completed scan";
     byId("scan-time").removeAttribute("datetime");
@@ -205,7 +243,7 @@ async function refresh(force = true) {
   const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 10000);
   byId("refresh").disabled = true;
   byId("refresh").setAttribute("aria-busy", "true");
-  status("Refreshing completed scan results…");
+  status("Refreshing saved scan results…");
   try {
     const response = await fetch(`/api/snapshot?mode=${requestMode}`, {cache: "no-store", signal: controller.signal});
     if (!response.ok) throw new Error(`Dashboard returned HTTP ${response.status}`);
@@ -217,7 +255,7 @@ async function refresh(force = true) {
     render(current, force);
     byId("connection-state").textContent = "Local dashboard";
     byId("connection-state").className = "pill";
-    status(current.state === "ready" ? "Showing a completed snapshot. Proxies can change after verification." : current.message, current.state === "corrupt");
+    status(current.state === "ready" ? current.summary.interrupted ? `Stopped scan / partial results: ${count(current.summary.tested)} tested, ${count(current.summary.skipped)} skipped. Proxies can change after verification.` : "Showing a completed snapshot. Proxies can change after verification." : current.message, current.state === "corrupt");
   } catch (error) {
     if (ticket !== generation || (!timedOut && error.name === "AbortError")) return;
     connected = false;
@@ -247,10 +285,10 @@ function selectMode(next, focus = false) {
   }
   if (focus) byId(`tab-${mode}`).focus();
   byId("proxy-panel").setAttribute("aria-labelledby", `tab-${mode}`);
-  byId("mode-label").textContent = mode === "mtproto" ? "TELEGRAM TRANSPORT" : "WEB CONNECTIVITY";
-  byId("mode-title").textContent = mode === "mtproto" ? "Your best MTProto connections" : "Your best web proxies";
-  byId("mode-description").textContent = mode === "mtproto" ? "Verified MTProto responses, ranked by score with latency breaking ties." : "HTTP, HTTPS and SOCKS proxies checked through a certificate-verified HTTPS request.";
-  byId("verification-note").textContent = mode === "mtproto" ? "A matched MTProto response checks reachability at scan time; later connectivity can change." : "Verification checks the configured HTTPS origin at scan time. It does not guarantee access to every website.";
+  byId("mode-label").textContent = mode === "mtproto" ? "TELEGRAM TRANSPORT" : mode === "telegram" ? "TELEGRAM HTTPS SHARE LINKS" : "HTTP / SOCKS CONNECTIVITY";
+  byId("mode-title").textContent = mode === "mtproto" ? "Your best MTProto connections" : mode === "telegram" ? "Your best Telegram Web Links" : "Your best HTTP / SOCKS proxies";
+  byId("mode-description").textContent = mode === "mtproto" ? "Verified MTProto responses, ranked by score with latency breaking ties." : mode === "telegram" ? "Verified MTProto proxies shared as HTTPS t.me/proxy links with their original server, port and secret." : "HTTP, HTTPS and SOCKS proxies checked through a certificate-verified HTTPS request.";
+  byId("verification-note").textContent = mode !== "web" ? "A matched MTProto response checks reachability at scan time; later connectivity can change." : "Verification checks the configured HTTPS origin at scan time. It does not guarantee access to every website.";
   byId("scan-command").textContent = `python main.py best10 --mode ${mode} --count ALL`;
   byId("protocol-field").hidden = mode !== "web";
   byId("search").value = "";
@@ -267,7 +305,8 @@ for (const value of modes) {
   tab.addEventListener("keydown", event => {
     if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
       event.preventDefault();
-      selectMode(event.key === "Home" ? modes[0] : event.key === "End" ? modes[1] : modes[1 - modes.indexOf(mode)], true);
+      const next = (modes.indexOf(mode) + (event.key === "ArrowLeft" ? -1 : 1) + modes.length) % modes.length;
+      selectMode(event.key === "Home" ? modes[0] : event.key === "End" ? modes.at(-1) : modes[next], true);
     }
   });
 }

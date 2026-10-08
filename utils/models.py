@@ -58,6 +58,12 @@ class Proxy:
     def tg_link(self) -> str:
         return "tg://proxy?" + urlencode({"server": self.server, "port": self.port, "secret": self.secret})
 
+    def web_link(self) -> str:
+        """Telegram's HTTPS share-link flavor of the same MTProto endpoint."""
+        return "https://t.me/proxy?" + urlencode(
+            {"server": self.server, "port": self.port, "secret": self.secret}
+        )
+
 
 @dataclass
 class TestSample:
@@ -184,6 +190,7 @@ class ProxyResult:
         )
         if isinstance(self.proxy, Proxy):
             d["tg_link"] = self.proxy.tg_link()
+            d["web_link"] = self.proxy.web_link()
         else:
             d["uri"] = self.proxy.uri()
         return d

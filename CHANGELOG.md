@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.1.0 — 2026-10-08
+
+- Add Telegram Web Link mode with real `https://t.me/proxy` links using the same MTProto sources/probe. Keep HTTP/SOCKS separate under the compatible CLI name `web`; expand the menu/dashboard to three clearly named groups.
+- Replace the 54 blocked direct Telegram previews with 51 reachable, nonempty GitHub datasets. Validate every configured remote MTProto feed and retain the 64 HTTP/SOCKS feeds; record DNS/TCP diagnostics and dated source-only counts.
+- On Ctrl+C during probing, retain finished attempt samples, show/export the best verified results so far and report interrupted/full/partial/skipped counts. Success rates use actual completed samples; unstarted attempts are excluded.
+- Publish an interrupted current snapshot while retaining the last full `completed_snapshot.json`. Normal completion updates both; cancellation before probing preserves previous output. Return to the menu after showing partial results and stop scheduled loops.
+- Add regression coverage for blocked-source recovery, real Telegram share-link exports, interrupted retries/history and three-mode dashboard states. Native Android and Docker execution remain unverified.
+
 ## 3.0.0 — 2026-10-08
 
 - Add independent MTProto and Web scan modes, ALL/custom candidate selection, deterministic source interleaving and globally deduplicated testing. The menu retains the REVMAMAD ASCII banner and offers both modes directly.

@@ -16,9 +16,17 @@ from pathlib import Path
 from config.loader import AppConfig
 from utils.logger import setup_logger
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
+
+
+class PipelineResults(list):
+    """List-compatible results retaining stop state for the scheduler."""
+
+    def __init__(self, outcome):
+        super().__init__(outcome.results)
+        self.interrupted = outcome.summary.get("interrupted", False)
 
 
 def load_config(path: str | Path | None = None) -> AppConfig:
@@ -52,7 +60,7 @@ def print_banner():
     if width >= 31:
         print("\n".join(art))
     print(f"REVMAMAD v{__version__}")
-    print("MTProto + Web Proxy Radar")
+    print("Telegram Links + HTTP / SOCKS")
     print("=" * min(width, 40) + end)
 
 
@@ -78,6 +86,15 @@ def run_pipeline(config: AppConfig, export: bool = True, *, mode: str = "mtproto
     from scan import run_scan
 
     outcome = run_scan(config, mode, limit, export)
+    if outcome.summary.get("interrupted"):
+        _message(
+            f"Stopped scan: {outcome.summary['tested']} / {outcome.summary['selected']} candidates have samples; "
+            f"{outcome.summary['skipped']} untested. Showing the best verified results so far."
+        )
+        if outcome.summary["partial_tested"]:
+            _message(
+                "Interrupted retries retain finished samples. Success percentages use only finished attempts."
+            )
     _message(
         f"Tested: {outcome.summary['tested']} | Verified: {outcome.summary['verified']} | Eligible: {outcome.summary['eligible']}"
     )
@@ -87,7 +104,7 @@ def run_pipeline(config: AppConfig, export: bool = True, *, mode: str = "mtproto
     failed_sources = sum(row.get("status") == "error" for row in outcome.source_reports)
     if failed_sources:
         _message(f"Unavailable sources: {failed_sources}. Other feeds continued.")
-    return outcome.results
+    return PipelineResults(outcome)
 
 
 def print_summary(results, n: int = 10):
@@ -100,7 +117,7 @@ def print_summary(results, n: int = 10):
     print()
 
 
-def print_best10(results, output_folder: str, *, saved: bool = True):
+def print_best10(results, output_folder: str, *, saved: bool = True, mode: str = "mtproto"):
     """Show up to ten verified proxies; a real scan may return fewer than ten."""
     healthy = [r for r in results if r.success_rate > 0 and r.avg_latency_ms is not None]
     from benchmark.scorer import rank
@@ -119,9 +136,12 @@ def print_best10(results, output_folder: str, *, saved: bool = True):
             f"\n#{i} {getattr(result.proxy, 'protocol', 'MTProto')} {result.proxy.server}:{result.proxy.port}"
         )
         _message(
-            f"Speed: {result.avg_latency_ms:.0f} ms | Success: {result.success_rate:.0%} | Score: {result.score:.1%}"
+            f"Speed: {result.avg_latency_ms:.0f} ms | Success: {result.success_rate:.0%} | Score: {result.score:.1%} | Samples: {result.attempts}"
         )
-        print(result.proxy.tg_link() if hasattr(result.proxy, "tg_link") else result.proxy.uri())
+        if mode == "telegram":
+            print(result.proxy.web_link())
+        else:
+            print(result.proxy.tg_link() if hasattr(result.proxy, "tg_link") else result.proxy.uri())
     print()
     if saved:
         _message(f"Saved to: {Path(output_folder) / 'best10_links.txt'}")
@@ -131,7 +151,7 @@ def cmd_collect(config: AppConfig, *, mode: str = "mtproto", limit: int | None =
     from scan import select_candidates, validate_request
 
     validate_request(mode, limit)
-    if mode == "mtproto":
+    if mode in ("mtproto", "telegram"):
         from collector.collector import Collector
 
         collector = Collector(config)
@@ -148,7 +168,7 @@ def cmd_benchmark(config: AppConfig, *, mode: str = "mtproto", limit: int | None
     from exporter.exporter import eligible_results
 
     results = eligible_results(run_pipeline(config, export=False, mode=mode, limit=limit), config.output)
-    print_best10(results, str(Path(config.output.folder) / mode), saved=False)
+    print_best10(results, str(Path(config.output.folder) / mode), saved=False, mode=mode)
 
 
 def cmd_export(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
@@ -162,7 +182,8 @@ def cmd_best10(config: AppConfig, *, mode: str = "mtproto", limit: int | None = 
     results = run_pipeline(config, export=True, mode=mode, limit=limit)
     # Display exactly the candidates eligible for the saved best10 links file.
     folder = mode_folder(config, mode)
-    print_best10(eligible_results(results, config.output), str(folder))
+    print_best10(eligible_results(results, config.output), str(folder), mode=mode)
+    return not getattr(results, "interrupted", False)
 
 
 def cmd_dashboard(config: AppConfig, *, open_browser: bool = True) -> bool:
@@ -179,7 +200,11 @@ def cmd_dashboard(config: AppConfig, *, open_browser: bool = True) -> bool:
 def cmd_scheduler(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
     from scheduler.scheduler import Scheduler
 
-    Scheduler(config, pipeline_fn=lambda: cmd_best10(config, mode=mode, limit=limit)).start()
+    def scheduled_scan():
+        if cmd_best10(config, mode=mode, limit=limit) is False:
+            raise KeyboardInterrupt
+
+    Scheduler(config, pipeline_fn=scheduled_scan).start()
 
 
 def cmd_top(config: AppConfig, n: int, *, mode: str = "mtproto"):
@@ -211,6 +236,17 @@ def cmd_top(config: AppConfig, n: int, *, mode: str = "mtproto"):
             raise ValueError(f"Invalid port in export entry {index}; regenerate the export.")
         latency = proxy.get("avg_latency_ms")
         print(f"{index:>3}. {proxy['server']}:{port} score={score:.3f} latency={latency} ms")
+        if mode == "telegram":
+            from tester.secrets import decode_secret, normalize_server
+            from utils.models import Proxy
+
+            try:
+                saved = Proxy(
+                    normalize_server(proxy["server"]), port, decode_secret(proxy.get("secret")).encoded
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid Telegram proxy in entry {index}; regenerate the export.") from exc
+            print(saved.web_link())
 
 
 def cmd_json(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
@@ -259,12 +295,13 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
     print_banner()
     while True:
         print("\n1) MTProto - test and show TOP 10")
-        print("2) Web Proxy - test and show TOP 10")
-        print("3) Open local web dashboard")
-        print("4) Collect candidates (no testing)")
-        print("5) Exit")
+        print("2) Telegram Web Link - https://t.me/proxy - TOP 10")
+        print("3) HTTP / SOCKS - internet proxy - TOP 10")
+        print("4) Open local web dashboard")
+        print("5) Collect candidates (no testing)")
+        print("6) Exit")
         try:
-            choice = input("\nChoose (1-5): ").strip()
+            choice = input("\nChoose (1-6): ").strip()
         except EOFError:
             _message("No keyboard input. Run a direct command, e.g. python main.py best10")
             return
@@ -272,24 +309,26 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
             print("\nBye!")
             return
         try:
-            if choice in ("1", "2"):
-                mode = "mtproto" if choice == "1" else "web"
+            if choice in ("1", "2", "3"):
+                mode = {"1": "mtproto", "2": "telegram", "3": "web"}[choice]
                 count = choose_count(mode)
                 if count != "back":
                     cmd_best10(config, mode=mode, limit=count)
-            elif choice == "3":
-                cmd_dashboard(config, open_browser=open_browser)
             elif choice == "4":
-                mode_choice = input("Collect: 1) MTProto  2) Web Proxy  0) Back: ").strip()
-                if mode_choice in ("1", "2"):
-                    cmd_collect(config, mode="mtproto" if mode_choice == "1" else "web")
+                cmd_dashboard(config, open_browser=open_browser)
+            elif choice == "5":
+                mode_choice = input(
+                    "Collect: 1) MTProto  2) Telegram Web Link  3) HTTP / SOCKS  0) Back: "
+                ).strip()
+                if mode_choice in ("1", "2", "3"):
+                    cmd_collect(config, mode={"1": "mtproto", "2": "telegram", "3": "web"}[mode_choice])
                 elif mode_choice != "0":
                     print("Invalid choice. Returning to the menu.")
-            elif choice == "5":
+            elif choice == "6":
                 print("Bye!")
                 return
             else:
-                print("Invalid choice. Type 1, 2, 3, 4, or 5.")
+                print("Invalid choice. Type 1, 2, 3, 4, 5, or 6.")
         except KeyboardInterrupt:
             print("\nCancelled. Returning to the menu.")
         except EOFError:
@@ -345,9 +384,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"REVMAMAD {__version__}")
     parser.add_argument(
         "--mode",
-        choices=("mtproto", "web"),
+        choices=("mtproto", "telegram", "web"),
         default="mtproto",
-        help="independent proxy group (default: mtproto)",
+        help="mtproto=tg:// links; telegram=https://t.me/proxy links; web=HTTP/SOCKS (default: mtproto)",
     )
     parser.add_argument(
         "--count",

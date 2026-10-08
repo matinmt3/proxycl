@@ -11,12 +11,12 @@ from uuid import uuid4
 
 from config.loader import AppConfig
 
-MODES = ("mtproto", "web")
+MODES = ("mtproto", "telegram", "web")
 
 
 def validate_request(mode: str, limit: int | None) -> None:
     if mode not in MODES:
-        raise ValueError("mode must be mtproto or web")
+        raise ValueError("mode must be mtproto, telegram or web")
     if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
         raise ValueError("Candidate count must be a positive integer or ALL")
 
@@ -67,12 +67,17 @@ def run_scan(
     validate_request(mode, limit)
     from benchmark.scorer import rank, score_all
     from exporter.exporter import Exporter, eligible_results
+    from utils.interruption import ScanInterrupted
 
-    if mode == "mtproto":
+    if mode in ("mtproto", "telegram"):
         from collector.collector import Collector
         from tester.runner import ParallelTester
 
         collector, tester, exporter_type = Collector(config), ParallelTester(config), Exporter
+        if mode == "telegram":
+            from exporter.telegram import TelegramWebExporter
+
+            exporter_type = TelegramWebExporter
     else:
         from webproxy.collector import WebCollector
         from webproxy.exporter import WebExporter
@@ -80,6 +85,7 @@ def run_scan(
 
         collector, tester, exporter_type = WebCollector(config), WebTester(config), WebExporter
     started = _now()
+    interrupted = False
     print(f"\n[{mode.upper()}] Collecting source feeds...", flush=True)
     candidates = select_candidates(collector.collect(), None)
     selected = select_candidates(candidates, limit)
@@ -95,10 +101,15 @@ def run_scan(
             * (config.testing.timeout_seconds + config.testing.connect_timeout_seconds)
         )
         print(
-            f"Testing {len(selected)} candidates, {workers} workers. Approximate timeout budget: {estimated / 60:.1f} min. Ctrl+C cancels.",
+            f"Testing {len(selected)} candidates, {workers} workers. Approximate timeout budget: {estimated / 60:.1f} min. Ctrl+C stops and saves the best results so far.",
             flush=True,
         )
-        results = rank(score_all(tester.run(selected), config.scoring))
+        try:
+            results = tester.run(selected)
+        except ScanInterrupted as exc:
+            results = exc.results
+            interrupted = True
+        results = rank(score_all(results, config.scoring))
     else:
         results = []
     folder = mode_folder(config, mode)
@@ -111,9 +122,14 @@ def run_scan(
         "started_at": started,
         "completed_at": _now(),
         "requested_count": limit,
+        "interrupted": interrupted,
+        "retry_count": config.testing.retries,
         "collected": len(candidates),
         "selected": len(selected),
         "tested": len(results),
+        "fully_tested": sum(r.attempts >= config.testing.retries for r in results),
+        "partial_tested": sum(0 < r.attempts < config.testing.retries for r in results),
+        "skipped": len(selected) - len(results),
         "verified": sum(r.successes > 0 and r.avg_latency_ms is not None for r in results),
         "eligible": len(eligible),
         "displayed": min(10, len(eligible)),
@@ -124,10 +140,28 @@ def run_scan(
         import json
 
         exporter = exporter_type(output_cfg)
+        # Preserve the last full generation while publishing useful stopped scans.
+        if interrupted and not (folder / "completed_snapshot.json").exists():
+            previous_path = folder / "snapshot.json"
+            if previous_path.exists():
+                try:
+                    previous = previous_path.read_text(encoding="utf-8")
+                    prior = json.loads(previous)
+                    if prior.get("mode") == mode and not prior.get("summary", {}).get("interrupted", False):
+                        exporter._write("completed_snapshot.json", previous)
+                except (OSError, ValueError, AttributeError, UnicodeError):
+                    pass
         exporter.export_all(results)
         if 10 not in output_cfg.top_sizes:
             exporter.export_top_n(eligible, 10)
-        exporter.export_best_n_readable(results, n=10)
+        readable = exporter.export_best_n_readable(results, n=10)
+        if interrupted:
+            exporter._write(
+                "best10_links.txt",
+                "Stopped scan / partial results\n"
+                f"Tested {len(results)} of {len(selected)}; skipped {summary['skipped']}.\n\n"
+                + readable.read_text(encoding="utf-8"),
+            )
         snapshot = {
             "version": 1,
             "mode": mode,
@@ -135,5 +169,8 @@ def run_scan(
             "source_reports": reports,
             "rows": [r.to_dict() for r in eligible],
         }
-        exporter._write("snapshot.json", json.dumps(snapshot, ensure_ascii=False, indent=2, allow_nan=False))
+        encoded = json.dumps(snapshot, ensure_ascii=False, indent=2, allow_nan=False)
+        exporter._write("snapshot.json", encoded)
+        if not interrupted:
+            exporter._write("completed_snapshot.json", encoded)
     return ScanOutcome(results, eligible, eligible[:10], summary, reports, folder)
