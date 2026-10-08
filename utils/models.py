@@ -7,8 +7,11 @@ import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlencode
+
+if TYPE_CHECKING:
+    from webproxy.models import WebProxy
 
 
 class FailureReason(str, Enum):
@@ -74,7 +77,7 @@ class TestSample:
 class ProxyResult:
     """Aggregated benchmark result for a proxy across multiple samples."""
 
-    proxy: Proxy
+    proxy: Proxy | WebProxy
     samples: list = field(default_factory=list)  # list[TestSample]
 
     @property
@@ -177,7 +180,10 @@ class ProxyResult:
                 "stability": round(self.stability, 4),
                 "score": round(self.score, 4),
                 "last_failure_reason": self.last_failure_reason.value,
-                "tg_link": self.proxy.tg_link(),
             }
         )
+        if isinstance(self.proxy, Proxy):
+            d["tg_link"] = self.proxy.tg_link()
+        else:
+            d["uri"] = self.proxy.uri()
         return d

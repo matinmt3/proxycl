@@ -35,3 +35,12 @@ def test_rank_orders_descending():
     ranked = rank(results)
     assert ranked[0].proxy.port == 1
     assert ranked[-1].proxy.port == 2
+
+
+def test_equal_score_prefers_lower_latency_then_stable_endpoint():
+    a = make_result([100], port=1)
+    b = make_result([10], port=2)
+    c = make_result([10], port=3)
+    for item in (a, b, c):
+        item.score = 0.8
+    assert [r.proxy.port for r in rank([c, a, b])] == [2, 3, 1]

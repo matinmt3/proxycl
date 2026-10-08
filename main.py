@@ -1,4 +1,4 @@
-"""REVMAMAD v2: collect, verify, rank, and export Telegram MTProto proxies."""
+"""REVMAMAD: independently verify and rank MTProto and web proxies."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from pathlib import Path
 from config.loader import AppConfig
 from utils.logger import setup_logger
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
@@ -52,7 +52,7 @@ def print_banner():
     if width >= 31:
         print("\n".join(art))
     print(f"REVMAMAD v{__version__}")
-    print("Telegram MTProto Proxy Radar")
+    print("MTProto + Web Proxy Radar")
     print("=" * min(width, 40) + end)
 
 
@@ -72,31 +72,22 @@ def _run_counts(proxies, results):
         )
 
 
-def run_pipeline(config: AppConfig, export: bool = True):
+def run_pipeline(config: AppConfig, export: bool = True, *, mode: str = "mtproto", limit: int | None = None):
     # Keep HTTP/crypto imports lazy so --help, --version, and the dashboard work
     # independently of the scanner's optional installation state.
-    from benchmark.scorer import rank, score_all
-    from collector.collector import Collector
-    from exporter.exporter import Exporter
-    from tester.runner import ParallelTester
+    from scan import run_scan
 
-    logger = logging.getLogger("mtselector")
-    proxies = Collector(config).collect()
-    logger.info("Collected %d proxies total.", len(proxies))
-    if proxies:
-        results = rank(score_all(ParallelTester(config).run(proxies), config.scoring))
-    else:
-        logger.warning("No proxies collected. Check the source warnings and your config.")
-        results = []
-    _run_counts(proxies, results)
-
-    if export:
-        # An empty fresh run must clear stale proxies from a previous export.
-        exporter = Exporter(config.output)
-        paths = exporter.export_all(results)
-        exporter.export_best_n_readable(results, n=10)
-        logger.info("Export complete: %s", paths)
-    return results
+    outcome = run_scan(config, mode, limit, export)
+    _message(
+        f"Tested: {outcome.summary['tested']} | Verified: {outcome.summary['verified']} | Eligible: {outcome.summary['eligible']}"
+    )
+    failures = outcome.summary["failure_counts"]
+    if failures:
+        _message("Failed attempts: " + ", ".join(f"{name}={count}" for name, count in failures.items()))
+    failed_sources = sum(row.get("status") == "error" for row in outcome.source_reports)
+    if failed_sources:
+        _message(f"Unavailable sources: {failed_sources}. Other feeds continued.")
+    return outcome.results
 
 
 def print_summary(results, n: int = 10):
@@ -109,11 +100,12 @@ def print_summary(results, n: int = 10):
     print()
 
 
-def print_best10(results, output_folder: str):
+def print_best10(results, output_folder: str, *, saved: bool = True):
     """Show up to ten verified proxies; a real scan may return fewer than ten."""
     healthy = [r for r in results if r.success_rate > 0 and r.avg_latency_ms is not None]
-    healthy.sort(key=lambda result: result.avg_latency_ms)
-    top = healthy[:10]
+    from benchmark.scorer import rank
+
+    top = rank(healthy)[:10]
     print("\n" + "=" * min(_width(), 40))
     print(f"VERIFIED PROXIES: {len(top)} / 10")
     print("=" * min(_width(), 40))
@@ -123,36 +115,54 @@ def print_best10(results, output_folder: str):
             "Network failures and your export filters can reduce this number. Check the failure counts above and try another source or network."
         )
     for i, result in enumerate(top, 1):
-        print(f"\n#{i} {result.proxy.server}:{result.proxy.port}")
+        print(
+            f"\n#{i} {getattr(result.proxy, 'protocol', 'MTProto')} {result.proxy.server}:{result.proxy.port}"
+        )
         _message(
             f"Speed: {result.avg_latency_ms:.0f} ms | Success: {result.success_rate:.0%} | Score: {result.score:.1%}"
         )
-        print(result.proxy.tg_link())
+        print(result.proxy.tg_link() if hasattr(result.proxy, "tg_link") else result.proxy.uri())
     print()
-    _message(f"Saved to: {Path(output_folder) / 'best10_links.txt'}")
+    if saved:
+        _message(f"Saved to: {Path(output_folder) / 'best10_links.txt'}")
 
 
-def cmd_collect(config: AppConfig):
-    from collector.collector import Collector
+def cmd_collect(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    from scan import select_candidates, validate_request
 
-    print(f"Collected {len(Collector(config).collect())} unique proxy candidates (not yet verified).")
+    validate_request(mode, limit)
+    if mode == "mtproto":
+        from collector.collector import Collector
+
+        collector = Collector(config)
+    else:
+        from webproxy.collector import WebCollector
+
+        collector = WebCollector(config)
+    print(
+        f"[{mode.upper()}] Collected {len(select_candidates(collector.collect(), limit))} unique proxy candidates (not yet verified)."
+    )
 
 
-def cmd_benchmark(config: AppConfig):
-    print_summary(run_pipeline(config, export=False), n=20)
+def cmd_benchmark(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    from exporter.exporter import eligible_results
+
+    results = eligible_results(run_pipeline(config, export=False, mode=mode, limit=limit), config.output)
+    print_best10(results, str(Path(config.output.folder) / mode), saved=False)
 
 
-def cmd_export(config: AppConfig):
-    print_summary(run_pipeline(config, export=True), n=10)
-    _message(f"All formats exported to: {config.output.folder}")
+def cmd_export(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    cmd_best10(config, mode=mode, limit=limit)
 
 
-def cmd_best10(config: AppConfig):
-    from exporter.exporter import Exporter
+def cmd_best10(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    from exporter.exporter import eligible_results
+    from scan import mode_folder
 
-    results = run_pipeline(config, export=True)
+    results = run_pipeline(config, export=True, mode=mode, limit=limit)
     # Display exactly the candidates eligible for the saved best10 links file.
-    print_best10(Exporter(config.output)._filtered(results), config.output.folder)
+    folder = mode_folder(config, mode)
+    print_best10(eligible_results(results, config.output), str(folder))
 
 
 def cmd_dashboard(config: AppConfig, *, open_browser: bool = True) -> bool:
@@ -166,14 +176,18 @@ def cmd_dashboard(config: AppConfig, *, open_browser: bool = True) -> bool:
     return True
 
 
-def cmd_scheduler(config: AppConfig):
+def cmd_scheduler(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
     from scheduler.scheduler import Scheduler
 
-    Scheduler(config, pipeline_fn=lambda: run_pipeline(config, export=True)).start()
+    Scheduler(config, pipeline_fn=lambda: cmd_best10(config, mode=mode, limit=limit)).start()
 
 
-def cmd_top(config: AppConfig, n: int):
-    path = Path(config.output.folder) / "proxy.json"
+def cmd_top(config: AppConfig, n: int, *, mode: str = "mtproto"):
+    from scan import mode_folder
+
+    path = mode_folder(config, mode) / "proxy.json"
+    if not path.exists() and mode == "mtproto":
+        path = Path(config.output.folder) / "proxy.json"  # v2 migration, MTProto only
     if not path.exists():
         print("No exported data yet. Run: python main.py export")
         return
@@ -199,14 +213,14 @@ def cmd_top(config: AppConfig, n: int):
         print(f"{index:>3}. {proxy['server']}:{port} score={score:.3f} latency={latency} ms")
 
 
-def cmd_json(config: AppConfig):
-    run_pipeline(config, export=True)
-    print(str(Path(config.output.folder) / "proxy.json"))
+def cmd_json(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    cmd_best10(config, mode=mode, limit=limit)
+    print(str(Path(config.output.folder) / mode / "proxy.json"))
 
 
-def cmd_csv(config: AppConfig):
-    run_pipeline(config, export=True)
-    print(str(Path(config.output.folder) / "proxy.csv"))
+def cmd_csv(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    cmd_best10(config, mode=mode, limit=limit)
+    print(str(Path(config.output.folder) / mode / "proxy.csv"))
 
 
 def _error(exc: Exception, config: AppConfig | None = None):
@@ -218,11 +232,34 @@ def _error(exc: Exception, config: AppConfig | None = None):
         _message(f"Config: {config._path or CONFIG_PATH}")
 
 
+def choose_count(mode: str):
+    print(f"\n[{mode.upper()}] TEST SCOPE")
+    print("1) ALL - test every collected candidate")
+    print("2) Custom count - test N candidates")
+    print("0) Back")
+    while True:
+        choice = input("Choose (0-2): ").strip().lower()
+        if choice in ("1", "all"):
+            return None
+        if choice == "0":
+            return "back"
+        if choice == "2":
+            while True:
+                value = input("Candidate count (positive integer, 0 = back): ").strip()
+                if value == "0":
+                    return "back"
+                try:
+                    return _positive_int(value)
+                except argparse.ArgumentTypeError:
+                    print("Enter a positive integer.")
+        print("Invalid choice. Type 0, 1 (ALL), or 2.")
+
+
 def interactive_menu(config: AppConfig, *, open_browser: bool = True):
     print_banner()
     while True:
-        print("\n1) Find up to 10 verified proxies")
-        print("2) Full scan and export")
+        print("\n1) MTProto - test and show TOP 10")
+        print("2) Web Proxy - test and show TOP 10")
         print("3) Open local web dashboard")
         print("4) Collect candidates (no testing)")
         print("5) Exit")
@@ -235,14 +272,19 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
             print("\nBye!")
             return
         try:
-            if choice == "1":
-                cmd_best10(config)
-            elif choice == "2":
-                cmd_export(config)
+            if choice in ("1", "2"):
+                mode = "mtproto" if choice == "1" else "web"
+                count = choose_count(mode)
+                if count != "back":
+                    cmd_best10(config, mode=mode, limit=count)
             elif choice == "3":
                 cmd_dashboard(config, open_browser=open_browser)
             elif choice == "4":
-                cmd_collect(config)
+                mode_choice = input("Collect: 1) MTProto  2) Web Proxy  0) Back: ").strip()
+                if mode_choice in ("1", "2"):
+                    cmd_collect(config, mode="mtproto" if mode_choice == "1" else "web")
+                elif mode_choice != "0":
+                    print("Invalid choice. Returning to the menu.")
             elif choice == "5":
                 print("Bye!")
                 return
@@ -250,6 +292,9 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
                 print("Invalid choice. Type 1, 2, 3, 4, or 5.")
         except KeyboardInterrupt:
             print("\nCancelled. Returning to the menu.")
+        except EOFError:
+            _message("No keyboard input. Use a direct command with --mode and --count.")
+            return
         except Exception as exc:
             _error(exc, config)
 
@@ -262,6 +307,10 @@ def _positive_int(value: str) -> int:
     if number <= 0:
         raise argparse.ArgumentTypeError("N must be a positive integer")
     return number
+
+
+def _candidate_count(value: str) -> int | None:
+    return None if value.casefold() == "all" else _positive_int(value)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -294,6 +343,19 @@ def main(argv: list[str] | None = None) -> int:
         "--no-browser", action="store_true", help="show the dashboard URL without opening a browser"
     )
     parser.add_argument("--version", action="version", version=f"REVMAMAD {__version__}")
+    parser.add_argument(
+        "--mode",
+        choices=("mtproto", "web"),
+        default="mtproto",
+        help="independent proxy group (default: mtproto)",
+    )
+    parser.add_argument(
+        "--count",
+        type=_candidate_count,
+        default=None,
+        metavar="ALL|N",
+        help="candidates to test, not the top10 result count (default: ALL)",
+    )
     args = parser.parse_args(argv)
     if args.n is not None and args.command != "top":
         parser.error("N is only supported with the 'top' command")
@@ -306,11 +368,22 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "menu":
             interactive_menu(config, open_browser=not args.no_browser)
         elif args.command == "run":
-            print_summary(run_pipeline(config, export=True), n=10)
+            if args.mode == "mtproto" and args.count is None:
+                from exporter.exporter import eligible_results
+
+                print_best10(
+                    eligible_results(run_pipeline(config, export=True), config.output),
+                    str(Path(config.output.folder) / "mtproto"),
+                )
+            else:
+                cmd_best10(config, mode=args.mode, limit=args.count)
         elif args.command == "dashboard":
             cmd_dashboard(config, open_browser=not args.no_browser)
         elif args.command == "top":
-            cmd_top(config, args.n or 10)
+            if args.mode == "mtproto":
+                cmd_top(config, args.n or 10)
+            else:
+                cmd_top(config, args.n or 10, mode=args.mode)
         else:
             commands = {
                 "best10": cmd_best10,
@@ -321,7 +394,10 @@ def main(argv: list[str] | None = None) -> int:
                 "json": cmd_json,
                 "csv": cmd_csv,
             }
-            commands[args.command](config)
+            if args.mode == "mtproto" and args.count is None:
+                commands[args.command](config)
+            else:
+                commands[args.command](config, mode=args.mode, limit=args.count)
     except KeyboardInterrupt:
         print("\nCancelled.")
         return 130

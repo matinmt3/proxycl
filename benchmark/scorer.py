@@ -44,4 +44,11 @@ def score_all(results: List[ProxyResult], scoring: ScoringConfig) -> List[ProxyR
 
 
 def rank(results: List[ProxyResult]) -> List[ProxyResult]:
-    return sorted(results, key=lambda r: r.score, reverse=True)
+    return sorted(
+        results,
+        key=lambda r: (
+            -r.score,
+            r.avg_latency_ms if r.avg_latency_ms is not None else math.inf,
+            r.proxy.key(),
+        ),
+    )

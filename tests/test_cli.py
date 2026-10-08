@@ -26,7 +26,7 @@ def cli_config(config, monkeypatch):
     return config
 
 
-@pytest.mark.parametrize("flag, expected", [("--help", "--no-browser"), ("--version", "REVMAMAD 2.0.0")])
+@pytest.mark.parametrize("flag, expected", [("--help", "--no-browser"), ("--version", "REVMAMAD 3.0.0")])
 def test_help_and_version_work_without_any_installed_packages(tmp_path, flag, expected):
     result = subprocess.run(
         [sys.executable, "-S", str(main.PROJECT_ROOT / "main.py"), flag],
@@ -50,32 +50,35 @@ def test_bad_cli_arguments_are_rejected_before_loading_config(args, monkeypatch,
 
 
 def test_menu_exercises_every_action_and_returns_after_dashboard(cli_config, monkeypatch, capsys):
-    choices = iter(["invalid", "1", "2", "3", "4", "5"])
+    choices = iter(["invalid", "1", "1", "2", "2", "12", "3", "4", "2", "5"])
     monkeypatch.setattr(builtins, "input", lambda prompt: next(choices))
     called = []
-    for name in ("cmd_best10", "cmd_export", "cmd_collect"):
-        monkeypatch.setattr(main, name, lambda cfg, name=name: called.append(name))
+    monkeypatch.setattr(main, "cmd_best10", lambda cfg, **kw: called.append(("test", kw)))
+    monkeypatch.setattr(main, "cmd_collect", lambda cfg, **kw: called.append(("collect", kw)))
     monkeypatch.setattr(
         main, "cmd_dashboard", lambda cfg, **kwargs: called.append(("dashboard", kwargs["open_browser"]))
     )
     assert main.main(["menu", "--no-browser"]) == 0
-    assert called == ["cmd_best10", "cmd_export", ("dashboard", False), "cmd_collect"]
+    assert called == [
+        ("test", {"mode": "mtproto", "limit": None}),
+        ("test", {"mode": "web", "limit": 12}),
+        ("dashboard", False),
+        ("collect", {"mode": "web"}),
+    ]
     output = capsys.readouterr().out
-    assert "REVMAMAD v2.0.0" in output and "Invalid choice" in output and "Bye!" in output
+    assert "REVMAMAD v3.0.0" in output and "Invalid choice" in output and "Bye!" in output
 
 
 def test_menu_survives_action_failure_and_interrupt(cli_config, monkeypatch, capsys):
-    choices = iter(["1", "2", "5"])
+    choices = iter(["1", "1", "2", "1", "5"])
     monkeypatch.setattr(builtins, "input", lambda prompt: next(choices))
 
-    def fail(cfg):
-        raise OSError("offline source unavailable")
-
-    def interrupt(cfg):
+    def fail(cfg, *, mode, limit):
+        if mode == "mtproto":
+            raise OSError("offline source unavailable")
         raise KeyboardInterrupt
 
     monkeypatch.setattr(main, "cmd_best10", fail)
-    monkeypatch.setattr(main, "cmd_export", interrupt)
     assert main.main([]) == 0
     output = capsys.readouterr().out
     assert "offline source unavailable" in output and "Returning to the menu" in output and "Bye!" in output
@@ -137,7 +140,7 @@ def test_banner_fits_32_column_termux(monkeypatch, capsys):
     lines = capsys.readouterr().out.splitlines()
     assert max(map(len, lines)) <= 32
     assert any("#" in line for line in lines)
-    assert "REVMAMAD v2.0.0" in lines
+    assert "REVMAMAD v3.0.0" in lines
 
 
 def make_result(server, *, success, failure=FailureReason.NONE, latency=100):
@@ -164,7 +167,7 @@ def test_pipeline_real_scoring_and_export_with_mocked_network(config, monkeypatc
     assert "VERIFIED PROXIES: 1 / 10" in output
     assert "guaranteed count" in output
     assert "unsupported_transport=1" in output and "tcp_timeout=1" in output
-    folder = Path(config.output.folder)
+    folder = Path(config.output.folder) / "mtproto"
     data = json.loads((folder / "proxy.json").read_text(encoding="utf-8"))
     assert [proxy["server"] for proxy in data] == ["1.1.1.1"]
     assert (folder / "best10_links.txt").exists() and (folder / "proxy.csv").exists()
@@ -183,7 +186,7 @@ def test_best10_display_matches_saved_links_with_export_limits(config, monkeypat
     monkeypatch.setattr(ParallelTester, "run", lambda self, proxies: results)
     main.cmd_best10(config)
     output = capsys.readouterr().out
-    saved = (Path(config.output.folder) / "best10_links.txt").read_text(encoding="utf-8")
+    saved = (Path(config.output.folder) / "mtproto" / "best10_links.txt").read_text(encoding="utf-8")
     assert "fast.example" in output and "fast.example" in saved
     assert "slow.example" not in output and "slow.example" not in saved
     assert "VERIFIED PROXIES: 1 / 10" in output
@@ -204,8 +207,8 @@ def test_empty_scan_replaces_stale_output(config, monkeypatch):
     from collector.collector import Collector
     from tester.runner import ParallelTester
 
-    folder = Path(config.output.folder)
-    folder.mkdir()
+    folder = Path(config.output.folder) / "mtproto"
+    folder.mkdir(parents=True)
     (folder / "proxy.json").write_text('[{"server": "stale"}]', encoding="utf-8")
     monkeypatch.setattr(Collector, "collect", lambda self: [])
     monkeypatch.setattr(ParallelTester, "run", lambda *args: pytest.fail("tested an empty candidate list"))
@@ -219,7 +222,7 @@ def test_json_csv_commands_generate_files(config, monkeypatch, capsys, command, 
 
     monkeypatch.setattr(Collector, "collect", lambda self: [])
     getattr(main, "cmd_" + command)(config)
-    path = Path(config.output.folder) / filename
+    path = Path(config.output.folder) / "mtproto" / filename
     assert path.exists()
     assert str(path) in capsys.readouterr().out
 

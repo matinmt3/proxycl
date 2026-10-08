@@ -21,6 +21,7 @@ MAX_SOURCE_REQUESTS = 8
 class Collector:
     def __init__(self, config: AppConfig):
         self.config = config
+        self.source_reports: list[dict] = []
 
     async def _fetch_url(self, client: httpx.AsyncClient, url: str) -> str:
         async with client.stream("GET", url, timeout=15.0, follow_redirects=True) as resp:
@@ -52,7 +53,9 @@ class Collector:
 
         return await asyncio.to_thread(read)
 
-    async def _fetch_source(self, client: httpx.AsyncClient, source: SourceConfig) -> List[Proxy]:
+    async def _fetch_source(
+        self, client: httpx.AsyncClient, source: SourceConfig, report: dict | None = None
+    ) -> List[Proxy]:
         try:
             if source.url.startswith("file://"):
                 text = await self._read_local_file(source.url)
@@ -68,29 +71,40 @@ class Collector:
             if isinstance(exc, httpx.HTTPStatusError):
                 detail += f" (HTTP {exc.response.status_code})"
             logger.warning("Source '%s' failed: %s", source.name, detail)
+            if report is not None:
+                report.update(status="error", count=0, error=detail)
             return []
 
         logger.info("Source '%s' -> %d proxies", source.name, len(proxies))
+        if report is not None:
+            report.update(status="ok" if proxies else "empty", count=len(proxies))
         return proxies
 
     async def collect_async(self) -> List[Proxy]:
+        self.source_reports = []
         enabled = [s for s in self.config.sources if s.enabled]
         if not enabled:
             logger.warning("No enabled sources configured.")
             return []
 
         semaphore = asyncio.Semaphore(MAX_SOURCE_REQUESTS)
+        reports = [{"name": source.name, "status": "empty", "count": 0} for source in enabled]
 
         async with httpx.AsyncClient(
-            headers={"User-Agent": "Revmamad/2.0 (MTProto proxy collector)"}
+            headers={"User-Agent": "Revmamad/3.0 (MTProto proxy collector)"}
         ) as client:
 
-            async def fetch(source: SourceConfig) -> List[Proxy]:
+            async def fetch(source: SourceConfig, report: dict) -> List[Proxy]:
                 async with semaphore:
-                    return await self._fetch_source(client, source)
+                    return await self._fetch_source(client, source, report)
 
-            results = await asyncio.gather(*(fetch(source) for source in enabled))
+            results = await asyncio.gather(
+                *(fetch(source, report) for source, report in zip(enabled, reports))
+            )
 
+        # Publish only a completed collection, in config order regardless of
+        # completion timing. Cancellation keeps incomplete reports unpublished.
+        self.source_reports = reports
         merged: Dict[str, Proxy] = {}
         for group in results:
             for proxy in group:

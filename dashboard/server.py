@@ -19,33 +19,25 @@ ASSETS = Path(__file__).resolve().parent
 
 
 class Handler(BaseHTTPRequestHandler):
-    def __init__(self, *args, data_file: Path, **kwargs):
-        self.data_file = data_file
+    def __init__(self, *args, output_folder: Path, **kwargs):
+        self.output_folder = output_folder
         super().__init__(*args, **kwargs)
 
     def do_GET(self):
         request = urlsplit(self.path)
         try:
-            if request.path in ("/", "/dashboard.js"):
-                filename = "index.html" if request.path == "/" else "dashboard.js"
+            if request.path in ("/", "/dashboard.js", "/styles.css"):
+                filename = "index.html" if request.path == "/" else request.path[1:]
                 content = (ASSETS / filename).read_bytes()
-                content_type = "text/html" if filename.endswith("html") else "application/javascript"
-            elif request.path == "/api/stats":
-                content = json.dumps(data.stats(self.data_file), allow_nan=False).encode("utf-8")
-                content_type = "application/json"
-            elif request.path == "/api/proxies":
-                params = parse_qs(request.query)
-
-                def value(key, default):
-                    return params.get(key, [default])[0]
-
+                content_type = {
+                    "index.html": "text/html",
+                    "dashboard.js": "application/javascript",
+                    "styles.css": "text/css",
+                }[filename]
+            elif request.path in ("/api/snapshot", "/api/stats", "/api/proxies"):
                 content = json.dumps(
-                    data.proxies(
-                        self.data_file,
-                        value("search", ""),
-                        value("sort_by", "score"),
-                        value("order", "desc"),
-                        int(value("limit", "200")),
+                    data.api_response(
+                        request.path, self.output_folder, parse_qs(request.query, keep_blank_values=True)
                     ),
                     allow_nan=False,
                 ).encode("utf-8")
@@ -56,10 +48,15 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             self.send_error(400, "Invalid query parameters")
             return
+        except OSError:
+            self.send_error(503, "Dashboard asset unavailable")
+            return
         self.send_response(200)
         self.send_header("Content-Type", content_type + "; charset=utf-8")
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         try:
             self.wfile.write(content)
@@ -71,7 +68,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def create_server(host: str, port: int, output_folder: str | Path) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), partial(Handler, data_file=Path(output_folder) / "proxy.json"))
+    server = ThreadingHTTPServer((host, port), partial(Handler, output_folder=Path(output_folder)))
     server.daemon_threads = True
     return server
 

@@ -71,7 +71,8 @@ def test_stdlib_server_http_routes_and_bad_queries(records):
             assert b"REVMAMAD" in response.read()
         with urlopen(base + "/dashboard.js") as response:
             javascript = response.read()
-            assert b"textContent" in javascript and b"typeof Chart" in javascript
+            assert b"textContent" in javascript and b"/api/snapshot" in javascript
+            assert b"Chart" not in javascript  # no external chart runtime in offline v3
         with urlopen(base + "/api/proxies?search=feed") as response:
             assert json.load(response)[0]["server"] == "a.test"
         with urlopen(base + "/api/stats") as response:

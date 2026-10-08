@@ -18,6 +18,15 @@ class SourceConfig:
 
 
 @dataclass
+class WebSourceConfig:
+    name: str
+    type: str
+    url: str
+    protocol: str = "http"
+    enabled: bool = True
+
+
+@dataclass
 class TestingConfig:
     workers: int = 200
     timeout_seconds: float = 5.0
@@ -105,6 +114,58 @@ def _absolute_path(value: str, base: Path) -> str:
     return str((path if path.is_absolute() else base / path).resolve())
 
 
+def _yaml_mapping(path: Path, label: str) -> dict:
+    import yaml
+
+    if not path.exists():
+        raise FileNotFoundError(f"{label.capitalize()} file not found: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        try:
+            raw = yaml.safe_load(handle)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid YAML in {path}: {exc}") from exc
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"The {label} must contain a YAML mapping")
+    return raw
+
+
+def _sources(data, section: str):
+    if data is None:
+        data = []
+    if not isinstance(data, list):
+        raise ValueError(f"{section} must be a YAML list")
+    web = section == "web_sources"
+    model = WebSourceConfig if web else SourceConfig
+    supported = {"github_raw", "http_txt", "http_json", "json_feed"}
+    if not web:
+        supported.add("telegram_channel")
+    sources = []
+    for index, value in enumerate(data, 1):
+        prefix = f"{section}[{index}]"
+        if not isinstance(value, dict):
+            raise ValueError(f"{prefix} must be a YAML mapping")
+        try:
+            source = model(**value)
+        except TypeError as exc:
+            raise ValueError(f"Invalid {prefix}: {exc}") from exc
+        source.name = _text(source.name, f"{prefix}.name")
+        source.url = _text(source.url, f"{prefix}.url")
+        source.type = _text(source.type, f"{prefix}.type")
+        if source.type not in supported:
+            label = "web source" if web else "source"
+            raise ValueError(f"Unsupported {label} type: {source.type}")
+        if not isinstance(source.enabled, bool):
+            raise ValueError(f"{prefix}.enabled must be true or false (without quotes)")
+        if web:
+            source.protocol = _text(source.protocol, f"{prefix}.protocol")
+            if source.protocol not in {"http", "https", "socks4", "socks5"}:
+                raise ValueError(f"{prefix}.protocol must be http, https, socks4, or socks5")
+        sources.append(source)
+    return sources
+
+
 @dataclass
 class AppConfig:
     sources: List[SourceConfig]
@@ -115,51 +176,45 @@ class AppConfig:
     dashboard: DashboardConfig
     logging: LoggingConfig
     _path: Optional[Path] = None
+    web_sources: List[WebSourceConfig] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "AppConfig":
         # The built-in config works even when main.py is invoked from another directory.
         p = Path(path).expanduser() if path is not None else Path(__file__).with_name("config.yaml")
         p = p.resolve()
-        if not p.exists():
-            raise FileNotFoundError(f"Config file not found: {p}")
-        import yaml
-
-        with p.open("r", encoding="utf-8") as f:
-            try:
-                raw = yaml.safe_load(f)
-            except yaml.YAMLError as exc:
-                raise ValueError(f"Invalid YAML in {p}: {exc}") from exc
-        if raw is None:
-            raw = {}
-        if not isinstance(raw, dict):
-            raise ValueError("The config must contain a YAML mapping")
-        allowed = {"sources", "testing", "scoring", "output", "scheduler", "dashboard", "logging"}
+        raw = _yaml_mapping(p, "config")
+        allowed = {
+            "sources",
+            "web_sources",
+            "source_catalog",
+            "testing",
+            "scoring",
+            "output",
+            "scheduler",
+            "dashboard",
+            "logging",
+        }
         unknown = set(raw) - allowed
         if unknown:
             raise ValueError(f"Unknown config section(s): {', '.join(str(key) for key in unknown)}")
 
-        source_data = raw.get("sources")
-        if source_data is None:
-            source_data = []
-        if not isinstance(source_data, list):
-            raise ValueError("sources must be a YAML list")
-        sources = []
-        for index, data in enumerate(source_data, 1):
-            if not isinstance(data, dict):
-                raise ValueError(f"sources[{index}] must be a YAML mapping")
-            try:
-                source = SourceConfig(**data)
-            except TypeError as exc:
-                raise ValueError(f"Invalid sources[{index}]: {exc}") from exc
-            source.name = _text(source.name, f"sources[{index}].name")
-            source.url = _text(source.url, f"sources[{index}].url")
-            source.type = _text(source.type, f"sources[{index}].type")
-            if source.type not in {"github_raw", "http_txt", "http_json", "json_feed", "telegram_channel"}:
-                raise ValueError(f"Unsupported source type: {source.type}")
-            if not isinstance(source.enabled, bool):
-                raise ValueError(f"sources[{index}].enabled must be true or false (without quotes)")
-            sources.append(source)
+        # Keep old external configs isolated: a catalog is opt-in, and explicit
+        # mode lists override it independently, including an explicit empty list.
+        base = p.parent.parent if p.parent.name == "config" and p.name == "config.yaml" else p.parent
+        catalog = {}
+        if raw.get("source_catalog") is not None:
+            location = _text(raw["source_catalog"], "source_catalog")
+            catalog = _yaml_mapping(Path(_absolute_path(location, base)), "catalog")
+            unknown_catalog = set(catalog) - {"sources", "web_sources"}
+            if unknown_catalog:
+                raise ValueError(
+                    f"Unknown catalog section(s): {', '.join(str(key) for key in unknown_catalog)}"
+                )
+        sources = _sources(raw.get("sources") if "sources" in raw else catalog.get("sources"), "sources")
+        web_sources = _sources(
+            raw.get("web_sources") if "web_sources" in raw else catalog.get("web_sources"), "web_sources"
+        )
 
         testing = _section(raw, "testing", TestingConfig)
         scoring = _section(raw, "scoring", ScoringConfig)
@@ -205,14 +260,17 @@ class AppConfig:
 
         # Match the repository's config/config.yaml layout; external configs resolve
         # their paths against their own containing directory.
-        base = p.parent.parent if p.parent.name == "config" and p.name == "config.yaml" else p.parent
         output.folder = _absolute_path(_text(output.folder, "output.folder"), base)
         logging_cfg.log_dir = _absolute_path(_text(logging_cfg.log_dir, "logging.log_dir"), base)
-        for source in sources:
+        for source in [*sources, *web_sources]:
             if source.url.startswith("file://"):
                 local = unquote(source.url[len("file://") :])
                 if not local:
                     raise ValueError(f"Empty local file path for source: {source.name}")
+                # pathlib.as_uri() produces file:///C:/... on Windows; remove
+                # its URI-only slash while retaining POSIX absolute paths.
+                if local.startswith("/") and Path(local[1:]).drive and Path(local[1:]).is_absolute():
+                    local = local[1:]
                 source.url = "file://" + _absolute_path(local, base)
 
         return cls(
@@ -224,4 +282,5 @@ class AppConfig:
             dashboard=dashboard,
             logging=logging_cfg,
             _path=p,
+            web_sources=web_sources,
         )

@@ -1,0 +1,569 @@
+# Researched public discovery feeds (2026-10-08). See docs/SOURCES.md.
+# Feed availability and proxy health are reported at scan time.
+# HTTPS-capable bare endpoints use HTTP CONNECT; explicit https:// means TLS to the proxy.
+sources:
+- name: SoliSpirit/mtproto
+  type: http_txt
+  url: https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt
+  enabled: true
+- name: Argh94/telegram-proxy-scraper
+  type: http_txt
+  url: https://raw.githubusercontent.com/Argh94/telegram-proxy-scraper/main/proxy.txt
+  enabled: true
+- name: Surfboardv2ray/TGProto
+  type: http_txt
+  url: https://raw.githubusercontent.com/Surfboardv2ray/TGProto/main/proxies.txt
+  enabled: true
+- name: tgmtproxy/mtproxy
+  type: http_txt
+  url: https://raw.githubusercontent.com/tgmtproxy/mtproxy/main/proxies.txt
+  enabled: true
+- name: darkvibez456/mtproto-proxy-auto
+  type: http_txt
+  url: https://raw.githubusercontent.com/darkvibez456/mtproto-proxy-auto/main/proxies.txt
+  enabled: true
+- name: V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB
+  type: http_txt
+  url: https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB/main/telegram_proxy_no1.txt
+  enabled: true
+- name: alltelegramproxy
+  type: telegram_channel
+  url: https://t.me/s/alltelegramproxy
+  enabled: true
+- name: netaccount
+  type: telegram_channel
+  url: https://t.me/s/netaccount
+  enabled: true
+- name: hotspotproxy
+  type: telegram_channel
+  url: https://t.me/s/hotspotproxy
+  enabled: true
+- name: mtpproxy0098
+  type: telegram_channel
+  url: https://t.me/s/mtpproxy0098
+  enabled: true
+- name: proxiteiegram
+  type: telegram_channel
+  url: https://t.me/s/proxiteiegram
+  enabled: true
+- name: proxymtproto
+  type: telegram_channel
+  url: https://t.me/s/proxymtproto
+  enabled: true
+- name: proxyhagh
+  type: telegram_channel
+  url: https://t.me/s/proxyhagh
+  enabled: true
+- name: darkproxy
+  type: telegram_channel
+  url: https://t.me/s/darkproxy
+  enabled: true
+- name: telmtproto
+  type: telegram_channel
+  url: https://t.me/s/telmtproto
+  enabled: true
+- name: mtp_roto
+  type: telegram_channel
+  url: https://t.me/s/mtp_roto
+  enabled: true
+- name: proxymtproto_tel
+  type: telegram_channel
+  url: https://t.me/s/proxymtproto_tel
+  enabled: true
+- name: proxymtprotoir
+  type: telegram_channel
+  url: https://t.me/s/proxymtprotoir
+  enabled: true
+- name: myporoxy
+  type: telegram_channel
+  url: https://t.me/s/myporoxy
+  enabled: true
+- name: drproxy_channel
+  type: telegram_channel
+  url: https://t.me/s/drproxy_channel
+  enabled: true
+- name: forall_proxy
+  type: telegram_channel
+  url: https://t.me/s/forall_proxy
+  enabled: true
+- name: durov_proxy
+  type: telegram_channel
+  url: https://t.me/s/durov_proxy
+  enabled: true
+- name: mtproxystar
+  type: telegram_channel
+  url: https://t.me/s/mtproxystar
+  enabled: true
+- name: iproxify
+  type: telegram_channel
+  url: https://t.me/s/iproxify
+  enabled: true
+- name: iran_proxi
+  type: telegram_channel
+  url: https://t.me/s/iran_proxi
+  enabled: true
+- name: iporoto
+  type: telegram_channel
+  url: https://t.me/s/iporoto
+  enabled: true
+- name: iroproxy
+  type: telegram_channel
+  url: https://t.me/s/iroproxy
+  enabled: true
+- name: proxyforopeta
+  type: telegram_channel
+  url: https://t.me/s/proxyforopeta
+  enabled: true
+- name: irn_proxy
+  type: telegram_channel
+  url: https://t.me/s/irn_proxy
+  enabled: true
+- name: mproxy_ir
+  type: telegram_channel
+  url: https://t.me/s/mproxy_ir
+  enabled: true
+- name: pyroproxy
+  type: telegram_channel
+  url: https://t.me/s/pyroproxy
+  enabled: true
+- name: mtpro_xyz
+  type: telegram_channel
+  url: https://t.me/s/mtpro_xyz
+  enabled: true
+- name: vpns
+  type: telegram_channel
+  url: https://t.me/s/vpns
+  enabled: true
+- name: mtmvpn
+  type: telegram_channel
+  url: https://t.me/s/mtmvpn
+  enabled: true
+- name: asr_proxy
+  type: telegram_channel
+  url: https://t.me/s/asr_proxy
+  enabled: true
+- name: proxyskyy
+  type: telegram_channel
+  url: https://t.me/s/proxyskyy
+  enabled: true
+- name: imtproto
+  type: telegram_channel
+  url: https://t.me/s/imtproto
+  enabled: true
+- name: mtpproxyirani
+  type: telegram_channel
+  url: https://t.me/s/mtpproxyirani
+  enabled: true
+- name: proxyy
+  type: telegram_channel
+  url: https://t.me/s/proxyy
+  enabled: true
+- name: proxy_qavi
+  type: telegram_channel
+  url: https://t.me/s/proxy_qavi
+  enabled: true
+- name: bamboo_mtproxy
+  type: telegram_channel
+  url: https://t.me/s/bamboo_mtproxy
+  enabled: true
+- name: canisproxy
+  type: telegram_channel
+  url: https://t.me/s/canisproxy
+  enabled: true
+- name: cheetah_mtp
+  type: telegram_channel
+  url: https://t.me/s/cheetah_mtp
+  enabled: true
+- name: chrome_proxy
+  type: telegram_channel
+  url: https://t.me/s/chrome_proxy
+  enabled: true
+- name: citizenproxy
+  type: telegram_channel
+  url: https://t.me/s/citizenproxy
+  enabled: true
+- name: data_proxy
+  type: telegram_channel
+  url: https://t.me/s/data_proxy
+  enabled: true
+- name: diamondproxy
+  type: telegram_channel
+  url: https://t.me/s/diamondproxy
+  enabled: true
+- name: diamondproxytm
+  type: telegram_channel
+  url: https://t.me/s/diamondproxytm
+  enabled: true
+- name: dr_proxyy
+  type: telegram_channel
+  url: https://t.me/s/dr_proxyy
+  enabled: true
+- name: fastproxy
+  type: telegram_channel
+  url: https://t.me/s/fastproxy
+  enabled: true
+- name: ferifox_proxy
+  type: telegram_channel
+  url: https://t.me/s/ferifox_proxy
+  enabled: true
+- name: findproxy
+  type: telegram_channel
+  url: https://t.me/s/findproxy
+  enabled: true
+- name: fireproxy66
+  type: telegram_channel
+  url: https://t.me/s/fireproxy66
+  enabled: true
+- name: flash_proxies
+  type: telegram_channel
+  url: https://t.me/s/flash_proxies
+  enabled: true
+- name: hkaa0_mt
+  type: telegram_channel
+  url: https://t.me/s/hkaa0_mt
+  enabled: true
+- name: iran_proxy7
+  type: telegram_channel
+  url: https://t.me/s/iran_proxy7
+  enabled: true
+- name: iranproxyir1
+  type: telegram_channel
+  url: https://t.me/s/iranproxyir1
+  enabled: true
+- name: iranproxypro
+  type: telegram_channel
+  url: https://t.me/s/iranproxypro
+  enabled: true
+- name: iranvipproxy
+  type: telegram_channel
+  url: https://t.me/s/iranvipproxy
+  enabled: true
+- name: proxydaemi
+  type: telegram_channel
+  url: https://t.me/s/proxydaemi
+  enabled: true
+- name: local-manual-list
+  type: http_txt
+  url: file://config/manual_proxies.txt
+  enabled: true
+web_sources:
+- name: proxifly/free-proxy-list/http (webfeed-01)
+  type: http_txt
+  url: https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.txt
+  protocol: http
+  enabled: true
+- name: proxifly/free-proxy-list/https (webfeed-02)
+  type: http_txt
+  url: https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/https/data.txt
+  protocol: http
+  enabled: true
+- name: proxifly/free-proxy-list/socks4 (webfeed-03)
+  type: http_txt
+  url: https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks4/data.txt
+  protocol: socks4
+  enabled: true
+- name: proxifly/free-proxy-list/socks5 (webfeed-04)
+  type: http_txt
+  url: https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/socks5/data.txt
+  protocol: socks5
+  enabled: true
+- name: monosans/proxy-list/http (webfeed-05)
+  type: http_txt
+  url: https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt
+  protocol: http
+  enabled: true
+- name: monosans/proxy-list/socks4 (webfeed-06)
+  type: http_txt
+  url: https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: monosans/proxy-list/socks5 (webfeed-07)
+  type: http_txt
+  url: https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: databay-labs/free-proxy-list/http (webfeed-08)
+  type: http_txt
+  url: https://raw.githubusercontent.com/databay-labs/free-proxy-list/master/http.txt
+  protocol: http
+  enabled: true
+- name: databay-labs/free-proxy-list/https (webfeed-09)
+  type: http_txt
+  url: https://raw.githubusercontent.com/databay-labs/free-proxy-list/master/https.txt
+  protocol: https
+  enabled: true
+- name: databay-labs/free-proxy-list/socks4 (webfeed-10)
+  type: http_txt
+  url: https://raw.githubusercontent.com/databay-labs/free-proxy-list/master/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: databay-labs/free-proxy-list/socks5 (webfeed-11)
+  type: http_txt
+  url: https://raw.githubusercontent.com/databay-labs/free-proxy-list/master/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: Moleway/Free-Proxy-List/http (webfeed-12)
+  type: http_txt
+  url: https://raw.githubusercontent.com/Moleway/Free-Proxy-List/main/http.txt
+  protocol: http
+  enabled: true
+- name: Moleway/Free-Proxy-List/https (webfeed-13)
+  type: http_txt
+  url: https://raw.githubusercontent.com/Moleway/Free-Proxy-List/main/https.txt
+  protocol: http
+  enabled: true
+- name: Moleway/Free-Proxy-List/socks4 (webfeed-14)
+  type: http_txt
+  url: https://raw.githubusercontent.com/Moleway/Free-Proxy-List/main/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: Moleway/Free-Proxy-List/socks5 (webfeed-15)
+  type: http_txt
+  url: https://raw.githubusercontent.com/Moleway/Free-Proxy-List/main/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: relayglass/free-proxy-list/http (webfeed-16)
+  type: http_txt
+  url: https://raw.githubusercontent.com/relayglass/free-proxy-list/main/protocol/http/http.txt
+  protocol: http
+  enabled: true
+- name: relayglass/free-proxy-list/https (webfeed-17)
+  type: http_txt
+  url: https://raw.githubusercontent.com/relayglass/free-proxy-list/main/protocol/https/https.txt
+  protocol: http
+  enabled: true
+- name: relayglass/free-proxy-list/socks4 (webfeed-18)
+  type: http_txt
+  url: https://raw.githubusercontent.com/relayglass/free-proxy-list/main/protocol/socks4/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: relayglass/free-proxy-list/socks5 (webfeed-19)
+  type: http_txt
+  url: https://raw.githubusercontent.com/relayglass/free-proxy-list/main/protocol/socks5/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: litportnet/free-proxy-list/http (webfeed-20)
+  type: http_txt
+  url: https://raw.githubusercontent.com/litportnet/free-proxy-list/live/proxies/http.txt
+  protocol: http
+  enabled: true
+- name: litportnet/free-proxy-list/https (webfeed-21)
+  type: http_txt
+  url: https://raw.githubusercontent.com/litportnet/free-proxy-list/live/proxies/https.txt
+  protocol: http
+  enabled: true
+- name: litportnet/free-proxy-list/socks4 (webfeed-22)
+  type: http_txt
+  url: https://raw.githubusercontent.com/litportnet/free-proxy-list/live/proxies/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: litportnet/free-proxy-list/socks5 (webfeed-23)
+  type: http_txt
+  url: https://raw.githubusercontent.com/litportnet/free-proxy-list/live/proxies/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: TheSpeedX/PROXY-List/http (webfeed-24)
+  type: http_txt
+  url: https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt
+  protocol: http
+  enabled: true
+- name: TheSpeedX/PROXY-List/socks4 (webfeed-25)
+  type: http_txt
+  url: https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: TheSpeedX/PROXY-List/socks5 (webfeed-26)
+  type: http_txt
+  url: https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: roosterkid/openproxylist/https (webfeed-27)
+  type: http_txt
+  url: https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt
+  protocol: http
+  enabled: true
+- name: roosterkid/openproxylist/socks4 (webfeed-28)
+  type: http_txt
+  url: https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS4_RAW.txt
+  protocol: socks4
+  enabled: true
+- name: roosterkid/openproxylist/socks5 (webfeed-29)
+  type: http_txt
+  url: https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt
+  protocol: socks5
+  enabled: true
+- name: ShiftyTR/Proxy-List/http (webfeed-30)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt
+  protocol: http
+  enabled: true
+- name: ShiftyTR/Proxy-List/https (webfeed-31)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/https.txt
+  protocol: http
+  enabled: true
+- name: ShiftyTR/Proxy-List/socks4 (webfeed-32)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: ShiftyTR/Proxy-List/socks5 (webfeed-33)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: vakhov/fresh-proxy-list/http (webfeed-34)
+  type: http_txt
+  url: https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/http.txt
+  protocol: http
+  enabled: true
+- name: vakhov/fresh-proxy-list/https (webfeed-35)
+  type: http_txt
+  url: https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/https.txt
+  protocol: http
+  enabled: true
+- name: vakhov/fresh-proxy-list/socks4 (webfeed-36)
+  type: http_txt
+  url: https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: vakhov/fresh-proxy-list/socks5 (webfeed-37)
+  type: http_txt
+  url: https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: prxchk/proxy-list/http (webfeed-38)
+  type: http_txt
+  url: https://raw.githubusercontent.com/prxchk/proxy-list/main/http.txt
+  protocol: http
+  enabled: true
+- name: prxchk/proxy-list/socks4 (webfeed-39)
+  type: http_txt
+  url: https://raw.githubusercontent.com/prxchk/proxy-list/main/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: prxchk/proxy-list/socks5 (webfeed-40)
+  type: http_txt
+  url: https://raw.githubusercontent.com/prxchk/proxy-list/main/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: jetkai/proxy-list/http (webfeed-41)
+  type: http_txt
+  url: https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-http.txt
+  protocol: http
+  enabled: true
+- name: jetkai/proxy-list/https (webfeed-42)
+  type: http_txt
+  url: https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-https.txt
+  protocol: http
+  enabled: true
+- name: jetkai/proxy-list/socks4 (webfeed-43)
+  type: http_txt
+  url: https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-socks4.txt
+  protocol: socks4
+  enabled: true
+- name: jetkai/proxy-list/socks5 (webfeed-44)
+  type: http_txt
+  url: https://raw.githubusercontent.com/jetkai/proxy-list/main/online-proxies/txt/proxies-socks5.txt
+  protocol: socks5
+  enabled: true
+- name: MuRongPIG/Proxy-Master/http (webfeed-45)
+  type: http_txt
+  url: https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/http_checked.txt
+  protocol: http
+  enabled: true
+- name: MuRongPIG/Proxy-Master/socks4 (webfeed-46)
+  type: http_txt
+  url: https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/socks4_checked.txt
+  protocol: socks4
+  enabled: true
+- name: MuRongPIG/Proxy-Master/socks5 (webfeed-47)
+  type: http_txt
+  url: https://raw.githubusercontent.com/MuRongPIG/Proxy-Master/main/socks5_checked.txt
+  protocol: socks5
+  enabled: true
+- name: clarketm/proxy-list/http (webfeed-49)
+  type: http_txt
+  url: https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt
+  protocol: http
+  enabled: true
+- name: ALIILAPRO/Proxy/http (webfeed-50)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/http.txt
+  protocol: http
+  enabled: true
+- name: ALIILAPRO/Proxy/socks4 (webfeed-51)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: ALIILAPRO/Proxy/socks5 (webfeed-52)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ALIILAPRO/Proxy/main/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: ErcinDedeoglu/proxies/http (webfeed-53)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ErcinDedeoglu/proxies/main/proxies/http.txt
+  protocol: http
+  enabled: true
+- name: ErcinDedeoglu/proxies/https (webfeed-54)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ErcinDedeoglu/proxies/main/proxies/https.txt
+  protocol: http
+  enabled: true
+- name: ErcinDedeoglu/proxies/socks4 (webfeed-55)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ErcinDedeoglu/proxies/main/proxies/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: ErcinDedeoglu/proxies/socks5 (webfeed-56)
+  type: http_txt
+  url: https://raw.githubusercontent.com/ErcinDedeoglu/proxies/main/proxies/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: sunny9577/proxy-scraper/http (webfeed-57)
+  type: http_txt
+  url: https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/generated/http_proxies.txt
+  protocol: http
+  enabled: true
+- name: Zaeem20/FREE_PROXIES_LIST/http (webfeed-60)
+  type: http_txt
+  url: https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/http.txt
+  protocol: http
+  enabled: true
+- name: Zaeem20/FREE_PROXIES_LIST/https (webfeed-61)
+  type: http_txt
+  url: https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/https.txt
+  protocol: http
+  enabled: true
+- name: Zaeem20/FREE_PROXIES_LIST/socks4 (webfeed-62)
+  type: http_txt
+  url: https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: Zaeem20/FREE_PROXIES_LIST/socks5 (webfeed-63)
+  type: http_txt
+  url: https://raw.githubusercontent.com/Zaeem20/FREE_PROXIES_LIST/master/socks5.txt
+  protocol: socks5
+  enabled: true
+- name: iplocate/free-proxy-list/http (webfeed-64)
+  type: http_txt
+  url: https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/http.txt
+  protocol: http
+  enabled: true
+- name: iplocate/free-proxy-list/https (webfeed-65)
+  type: http_txt
+  url: https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/https.txt
+  protocol: http
+  enabled: true
+- name: iplocate/free-proxy-list/socks4 (webfeed-66)
+  type: http_txt
+  url: https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/socks4.txt
+  protocol: socks4
+  enabled: true
+- name: iplocate/free-proxy-list/socks5 (webfeed-67)
+  type: http_txt
+  url: https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/socks5.txt
+  protocol: socks5
+  enabled: true

@@ -1,6 +1,6 @@
 # Protocol and performance notes
 
-Version 2 verifies a `req_pq_multi` / `resPQ` exchange without account login. Raw obfuscated transport, `dd` padded-intermediate, and `ee` FakeTLS have distinct framing. Encryption keys, stream counters, response structure, and request nonce are checked. Success is a point-in-time result, not a guarantee that an authorized Telegram session will work later.
+Version 3 retains the `req_pq_multi` / `resPQ` verification exchange without account login. Raw obfuscated transport, `dd` padded-intermediate, and `ee` FakeTLS have distinct framing. Encryption keys, stream counters, response structure, and request nonce are checked. Success is a point-in-time result, not a guarantee that an authorized Telegram session will work later.
 
 Connection and handshake timeouts are bounded. Retries collect independent latency samples; more retries take longer. Worker count is capped against available file descriptors when the platform exposes the limit. Phones can start around 50–100 workers and adjust for their network and workload.
 

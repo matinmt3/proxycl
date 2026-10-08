@@ -1,25 +1,9 @@
-# Telegram MTProto Smart Selector - Configuration
+# REVMAMAD - Configuration
 
-# Proxy sources. Each source has a type and a location.
-# Supported types: github_raw, http_txt, http_json, json_feed, telegram_channel(optional/manual)
-sources:
-  # Public text feed; individual endpoints are verified at scan time.
-  - name: "solispirit-mtproto"
-    type: "http_txt"
-    url: "https://raw.githubusercontent.com/SoliSpirit/mtproto/master/all_proxies.txt"
-    enabled: true
-
-  # Live, auto-updated (every ~3h) MTProto proxy list from GitHub (Persian project)
-  - name: "argh94-telegram-proxy-scraper"
-    type: "http_txt"
-    url: "https://raw.githubusercontent.com/Argh94/telegram-proxy-scraper/main/proxy.txt"
-    enabled: true
-
-  # Your own manual/offline list (edit config/manual_proxies.txt to add proxies by hand)
-  - name: "local-manual-list"
-    type: "http_txt"
-    url: "file://config/manual_proxies.txt"
-    enabled: true
+# Defaults: 60 MTProto remote feeds, one manual list, and 64 Web feeds.
+# Explicit sources: [] or web_sources: [] disables that mode independently.
+# An external configuration uses a catalog only when it names source_catalog.
+source_catalog: config/sources.yaml
 
 # Networking / testing behaviour
 testing:

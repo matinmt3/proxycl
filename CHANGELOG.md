@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.0 — 2026-10-08
+
+- Add independent MTProto and Web scan modes, ALL/custom candidate selection, deterministic source interleaving and globally deduplicated testing. The menu retains the REVMAMAD ASCII banner and offers both modes directly.
+- Add 60 remote MTProto sources and 64 Web feeds with an optional YAML catalog, independent explicit overrides, bounded reads and ordered source-health reports. See docs/SOURCES.md for provenance and host-specific availability.
+- Verify HTTP CONNECT, HTTPS-to-proxy, SOCKS4a and SOCKS5 through a certificate-verified HTTPS origin response. Keep certificate checks enabled and exclude direct fallback and credentialed public entries.
+- Use common composite-score ordering for console and saved top ten. Isolate exports under output/mtproto and output/web; publish atomic completed-scan snapshots with honest selected/tested/verified/eligible counts.
+- Replace the dashboard with local assets, separate mode tabs, mobile result cards, source/failure details, search/sort/protocol filters, copy controls, refresh/pause and clear empty/stale/corrupt states. The stdlib server remains available in lightweight installs.
+- Extend regression coverage for source catalogs, four Web transports/TLS failures, workers/cancellation, mode isolation, candidate counts, ranking consistency and dashboard APIs/client behavior. Record small dated live samples separately from deterministic tests in docs/TESTING.md.
+
 ## 2.0.0 — 2026-10-06
 
 - Fix MTProxy encryption keys/AES counters and require a nonce-valid req_pq/resPQ response. Add raw/dd/ee FakeTLS support, strict parsing, IPv6/base64 handling, bounded workers, and cancellation cleanup.
