@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -96,6 +97,58 @@ class DashboardConfig:
 class LoggingConfig:
     level: str = "INFO"
     log_dir: str = "logs"
+
+
+@dataclass
+class ScanConfig:
+    strategy: str = "staged"
+    prefilter: bool = True
+    finalists: int = 20
+    finalist_retries: int = 5
+    finalist_ping_count: int = 10
+    finalist_ping_interval_seconds: float = 1.0
+    finalist_reconnect_delay_seconds: float = 2.0
+    finalist_workers: int = 4
+    network: str = "default"
+    resume: bool = False
+    checkpoint_enabled: bool = True
+    checkpoint_max_age_minutes: float = 30.0
+    history_enabled: bool = True
+    source_health_enabled: bool = True
+    source_failure_threshold: int = 3
+    source_cooldown_minutes: float = 30.0
+
+    def validate(self):
+        if self.strategy not in ("staged", "single"):
+            raise ValueError("scan.strategy must be staged or single")
+        for name in ("prefilter", "resume", "checkpoint_enabled", "history_enabled", "source_health_enabled"):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError(f"scan.{name} must be true or false")
+        if not isinstance(self.network, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", self.network):
+            raise ValueError("scan.network must be 1-32 letters, digits, underscores or hyphens")
+        limits = {
+            "finalists": (1, 100),
+            "finalist_retries": (1, 20),
+            "finalist_ping_count": (3, 10),
+            "finalist_workers": (1, 16),
+            "source_failure_threshold": (2, 20),
+        }
+        for name, (minimum, maximum) in limits.items():
+            value = _number(getattr(self, name), f"scan.{name}", integer=True)
+            if not minimum <= value <= maximum:
+                raise ValueError(f"scan.{name} must be between {minimum} and {maximum}")
+        for name, minimum, maximum in (
+            ("finalist_ping_interval_seconds", 0.1, 5),
+            ("finalist_reconnect_delay_seconds", 0, 60),
+            ("checkpoint_max_age_minutes", 1, 1440),
+            ("source_cooldown_minutes", 1, 1440),
+        ):
+            value = _number(getattr(self, name), f"scan.{name}")
+            if not minimum <= value <= maximum:
+                raise ValueError(f"scan.{name} must be between {minimum} and {maximum}")
+        if self.resume and not self.checkpoint_enabled:
+            raise ValueError("scan.resume requires checkpoint_enabled")
+        return self
 
 
 def _section(raw: dict, name: str, model):
@@ -194,6 +247,7 @@ class AppConfig:
     logging: LoggingConfig
     _path: Optional[Path] = None
     web_sources: List[WebSourceConfig] = field(default_factory=list)
+    scan: ScanConfig = field(default_factory=ScanConfig)
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "AppConfig":
@@ -211,6 +265,7 @@ class AppConfig:
             "scheduler",
             "dashboard",
             "logging",
+            "scan",
         }
         unknown = set(raw) - allowed
         if unknown:
@@ -239,6 +294,7 @@ class AppConfig:
         scheduler = _section(raw, "scheduler", SchedulerConfig)
         dashboard = _section(raw, "dashboard", DashboardConfig)
         logging_cfg = _section(raw, "logging", LoggingConfig)
+        scan_cfg = _section(raw, "scan", ScanConfig).validate()
 
         for name in ("workers", "retries", "mtproto_workers", "ping_count"):
             _number(getattr(testing, name), f"testing.{name}", positive=True, integer=True)
@@ -338,4 +394,5 @@ class AppConfig:
             logging=logging_cfg,
             _path=p,
             web_sources=web_sources,
+            scan=scan_cfg,
         )

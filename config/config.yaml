@@ -19,6 +19,26 @@ testing:
   ping_interval_seconds: 0.5
   telegram_dc_ids: [2, 4]
 
+# Three stages: transport prefilter -> strict sessions -> sustained finalists.
+# A stopped scan labels its existing strict evidence as provisional.
+scan:
+  strategy: staged        # single keeps the v3.2 strict session scan
+  prefilter: true
+  finalists: 20
+  finalist_retries: 5     # five extra fresh connections after baseline testing
+  finalist_ping_count: 10
+  finalist_ping_interval_seconds: 1.0
+  finalist_reconnect_delay_seconds: 2.0
+  finalist_workers: 4
+  network: default       # use names such as wifi, mobile, home; selected by you
+  resume: false
+  checkpoint_enabled: true
+  checkpoint_max_age_minutes: 30
+  history_enabled: true
+  source_health_enabled: true
+  source_failure_threshold: 3
+  source_cooldown_minutes: 30
+
 # Scoring weights (must sum to 1.0, values are checked/normalized at runtime)
 scoring:
   latency_weight: 0.35
