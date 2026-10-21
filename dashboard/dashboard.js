@@ -13,6 +13,53 @@ let renderedIdentity = "";
 let connected = false;
 const count = value => Number.isInteger(value) && value >= 0 ? value.toLocaleString() : "—";
 const percentage = value => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "—";
+const stages = {prefilter: "Reachability prefilter", baseline: "Telegram session baseline", finalists: "Sustained finalist recheck", complete: "Scan complete", stopped: "Scan stopped"};
+
+function selectedNetwork(current) {
+  const value = current?.network ?? current?.summary?.network ?? "default";
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(value) ? value : "default";
+}
+
+function terminalCommand(current, resume = false, recheck = false) {
+  const network = selectedNetwork(current);
+  const command = recheck || resume && (current?.progress?.command === "recheck" || current?.summary?.command === "recheck") ? "recheck" : "best10";
+  return `python main.py ${command} --mode ${mode}${command === "best10" ? " --count ALL" : ""} --network ${network}${resume ? " --resume" : ""}`;
+}
+
+function validProgress(current) {
+  const value = current.progress;
+  if (!value || value.version !== 1 || value.mode !== mode || value.network !== selectedNetwork(current) || !Object.hasOwn(stages, value.stage)) return null;
+  if (![value.completed, value.total, value.qualified].every(n => Number.isInteger(n) && n >= 0) || value.completed > value.total || value.qualified > value.total) return null;
+  if (typeof value.active !== "boolean" || typeof value.resumable !== "boolean") return null;
+  if (value.remaining_seconds != null && (!Number.isFinite(value.remaining_seconds) || value.remaining_seconds < 0)) return null;
+  const age = Date.now() - new Date(value.updated_at).getTime();
+  return Number.isFinite(age) && age >= -60000 && age <= (value.active ? 180000 : 86400000) ? value : null;
+}
+
+function renderActivity(current) {
+  const network = selectedNetwork(current);
+  const progress = validProgress(current);
+  byId("network-label").textContent = `Network: ${network}`;
+  byId("scan-command").textContent = terminalCommand(current);
+  byId("copy-resume").hidden = !(progress?.resumable && !progress.active);
+  byId("scan-progress").max = progress?.total || 1;
+  byId("scan-progress").value = progress?.completed || 0;
+  byId("progress-label").textContent = progress ? stages[progress.stage] : "No recent scan activity reported";
+  const remaining = progress?.remaining_seconds;
+  const estimate = remaining == null ? "Remaining time not yet estimated" : `About ${Math.ceil(remaining / 60)} min remaining (estimate)`;
+  byId("progress-meta").textContent = progress
+    ? `${count(progress.completed)} / ${count(progress.total)} in this stage · ${count(progress.qualified)} qualified · ${progress.active ? estimate : progress.resumable ? "Resume is available in the terminal; saved evidence must still pass the age check." : "Start a fresh scan in the terminal."}`
+    : current.progress_state === "stale" ? "Activity heartbeat expired. The terminal may have stopped; saved results below keep their original scan time." : "Live activity appears while a terminal scan is running. Results below belong to their saved scan.";
+  byId("scan-progress").setAttribute("aria-valuetext", byId("progress-label").textContent + ": " + (progress ? `${progress.completed} of ${progress.total}` : "No recent activity"));
+  const observations = Array.isArray(current.history) ? current.history.filter(row => row && typeof row === "object" && row.mode === mode && row.network === network && typeof row.server === "string").slice(0, 20) : [];
+  byId("history-count").textContent = observations.length ? `· ${observations.length} endpoints` : "";
+  byId("history-list").replaceChildren(...observations.map(row => {
+    const tested = new Date(row.last_tested * 1000);
+    const date = Number.isNaN(tested.getTime()) ? "Unknown time" : tested.toLocaleString();
+    return node("li", `${String(row.server)}:${row.port} · ${date} · last test ${count(row.successes)} / ${count(row.attempts)} passed · p95 ${Number.isFinite(row.p95_ms) ? Math.round(row.p95_ms) + " ms" : "unavailable"} · ${row.qualified === true ? "qualified at that time" : "did not qualify"} · history ${count(row.historical_successes)} / ${count(row.historical_attempts)} across ${count(row.run_count)} runs`);
+  }));
+  if (!observations.length) byId("history-list").append(node("li", current.history_state === "corrupt" ? "Saved history could not be read; run a fresh scan to update it." : "No past observations saved for this mode and network."));
+}
 
 function status(text, error = false) {
   byId("status").textContent = text;
@@ -212,9 +259,14 @@ function renderResults(current) {
 
 function renderHealth(current) {
   const reports = current.source_reports;
-  const reached = reports.filter(report => report.status !== "error").length;
+  const reached = reports.filter(report => ["ok", "empty"].includes(report.status)).length;
   byId("source-summary").textContent = reports.length ? `Sources reached: ${reached} / ${reports.length}` : "Source health · no report";
-  byId("source-list").replaceChildren(...reports.map(report => node("li", `${report.name} · ${report.status} · ${report.count} candidates${report.error ? ` · ${report.error}` : ""}`, report.status === "error" ? "source-error" : "")));
+  byId("source-list").replaceChildren(...reports.map(report => {
+    const checked = Number.isInteger(report.checked) ? ` · ${count(report.checked)} checked` : "";
+    const qualified = Number.isInteger(report.qualified) ? ` · ${count(report.qualified)} qualified` : "";
+    const cooldown = Number.isFinite(report.cooldown_until) && report.cooldown_until * 1000 > Date.now() ? ` · next retry ${new Date(report.cooldown_until * 1000).toLocaleString()}` : "";
+    return node("li", `${report.name} · ${report.status} · ${report.count} candidates${checked}${qualified}${cooldown}${report.error ? ` · ${report.error}` : ""}`, ["error", "cooldown"].includes(report.status) ? "source-error" : "");
+  }));
   if (!reports.length) byId("source-list").append(node("li", "Source reports appear after a v3 scan."));
   const failures = Object.entries(current.summary.failure_counts || {});
   byId("failure-summary").textContent = failures.length ? `Failure details · ${failures.length} categories` : "Failure details · none reported";
@@ -227,6 +279,7 @@ function render(current, force = false) {
     current = {state: "missing", message: "No scan snapshot loaded.", rows: [], summary: {}, source_reports: []};
   }
   const summary = current.summary;
+  renderActivity(current);
   const profile = mode === "web" ? "web" : summary.verification_profile || "transport";
   const strict = profile === "telegram_session" && current.rows.every(strictQualified) && [summary.strict_verified, summary.transport_reachable, summary.tested].every(Number.isInteger) && current.rows.length <= summary.strict_verified && summary.strict_verified <= summary.transport_reachable && summary.transport_reachable <= summary.tested && summary.verified === summary.strict_verified;
   const invalidStrict = profile === "telegram_session" && !strict;
@@ -241,8 +294,10 @@ function render(current, force = false) {
   byId("tested-description").textContent = interrupted ? "Candidates with samples" : "Completed checks";
   byId("partial-note").hidden = !interrupted;
   byId("partial-note").textContent = `Stopped scan / partial results. Tested ${count(summary.tested)} of ${count(summary.selected)} selected candidates; ${count(summary.skipped)} skipped. These ranks cover the tested candidates.`;
+  if (interrupted && summary.provisional === true) byId("partial-note").textContent += " Sustained finalist testing is incomplete; baseline-only candidates do not qualify. Resume in the terminal or run a fresh recheck.";
   byId("scan-time-label").textContent = interrupted ? "SCAN STOPPED AT" : "LAST COMPLETED SCAN";
   byId("results-title").textContent = mode !== "web" && !strict ? interrupted ? "Partial transport evidence" : "Transport evidence · strict re-scan needed" : interrupted ? "Verified partial results" : "Top verified results";
+  if (summary.strategy === "staged" && strict) byId("results-title").textContent = summary.provisional ? "Qualified results so far · finalist testing incomplete" : "Top results after finalist rechecks";
   for (const key of ["selected", "tested"]) byId(`count-${key}`).textContent = count(summary[key]);
   byId("count-verified").textContent = count(mode === "web" ? summary.verified : strict ? summary.strict_verified : 0);
   const timestamp = summary.completed_at ? new Date(summary.completed_at) : null;
@@ -299,7 +354,8 @@ async function refresh(force = true) {
     render(current, force);
     byId("connection-state").textContent = "Local dashboard";
     byId("connection-state").className = "pill";
-    status(current.state === "ready" ? current.summary.interrupted ? `Stopped scan / partial results: ${count(current.summary.tested)} tested, ${count(current.summary.skipped)} skipped. Proxies can change after verification.` : "Showing a completed snapshot. Proxies can change after verification." : current.message, current.state === "corrupt");
+    const progress = validProgress(current);
+    status(progress?.active ? `${stages[progress.stage]} is running in the terminal. Saved results below retain their own scan time.` : current.state === "ready" ? current.summary.interrupted ? `Stopped scan / partial results: ${count(current.summary.tested)} tested, ${count(current.summary.skipped)} skipped. Proxies can change after verification.` : "Showing a completed snapshot. Proxies can change after verification." : current.message, current.state === "corrupt");
   } catch (error) {
     if (ticket !== generation || (!timedOut && error.name === "AbortError")) return;
     connected = false;
@@ -374,6 +430,8 @@ byId("clear-filters").addEventListener("click", () => {
   byId("search").focus();
 });
 byId("copy-command").addEventListener("click", event => copyText(byId("scan-command").textContent, event.currentTarget));
+byId("copy-resume").addEventListener("click", event => copyText(terminalCommand(snapshots.get(mode), true), event.currentTarget));
+byId("copy-recheck").addEventListener("click", event => copyText(terminalCommand(snapshots.get(mode), false, true), event.currentTarget));
 document.addEventListener("visibilitychange", () => {
   clearTimeout(pollTimer);
   if (document.hidden) { if (activeRequest) activeRequest.abort(); }

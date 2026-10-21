@@ -18,7 +18,7 @@
           <path d="M24 3v21l15 15M3 24h12M24 36v9M36 24h9"/>
           <circle class="radar-dot" cx="24" cy="24" r="3"/>
         </svg>
-        <div><p class="eyebrow">LOCAL PROXY RADAR <span class="version">V3.2</span></p><h1>REVMAMAD</h1></div>
+        <div><p class="eyebrow">LOCAL PROXY RADAR <span class="version">V3.3</span></p><h1>REVMAMAD</h1></div>
       </div>
       <div class="toolbar">
         <button id="refresh" class="button" type="button">Refresh</button>
@@ -42,10 +42,19 @@
       <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true">Loading the last saved scan…</p>
       <p id="partial-note" class="partial-note" hidden>Stopped scan / partial results.</p>
 
+      <section class="scan-progress" aria-labelledby="progress-title">
+        <div class="progress-heading"><h3 id="progress-title">Scan activity</h3><span id="network-label" class="pill neutral">Network: default</span></div>
+        <label id="progress-label" for="scan-progress">No active scan reported</label>
+        <progress id="scan-progress" max="1" value="0">0%</progress>
+        <p id="progress-meta" class="muted" aria-live="polite">Live activity appears while a terminal scan is running.</p>
+      </section>
+
       <div class="snapshot-info">
         <div><span class="small-label" id="scan-time-label">LAST COMPLETED SCAN</span><time id="scan-time">No completed scan</time><p id="scan-meta" class="muted">Start a scan in the terminal to see its results here.</p></div>
         <span id="freshness" class="pill neutral">Waiting for results</span>
       </div>
+
+      <details class="health history-panel"><summary>Recent tests on this network <span id="history-count"></span></summary><p class="measurement-note">Past observations only. Run a fresh scan before choosing a connection; history never qualifies a result.</p><ol id="history-list" class="source-list"></ol></details>
       <div class="metrics" aria-label="Scan counts">
         <article class="metric"><span>Selected</span><strong id="count-selected">—</strong><small>Candidates to test</small></article>
         <article class="metric"><span>Tested</span><strong id="count-tested">—</strong><small id="tested-description">Completed checks</small></article>
@@ -79,6 +88,7 @@
         <div><strong>Scans start in your terminal.</strong><p>This dashboard displays saved verified results. Keep its terminal session running.</p></div>
         <code id="scan-command" dir="ltr">python main.py best10 --mode mtproto --count ALL</code>
         <button id="copy-command" class="button quiet" type="button">Copy command</button>
+        <div class="terminal-followups"><button id="copy-resume" class="button quiet" type="button" hidden>Copy resume command</button><button id="copy-recheck" class="button quiet" type="button">Copy recheck command</button></div>
       </aside>
       <p class="verification-note" id="verification-note">Telegram RTT measures encrypted ping round trips, not download throughput or an authorized messaging session.</p>
     </section>

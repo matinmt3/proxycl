@@ -244,3 +244,84 @@ test("Telegram share links require a valid row secret and matching decoded ident
     assert.equal(vm.runInContext("safeConnection(row)", context), context.row.web_link);
   }
 });
+
+function liveProgress(extra = {}) {
+  return {version: 1, mode: "mtproto", network: "mobile", command: "best10", run_id: "live-1",
+    updated_at: new Date().toISOString(), stage: "finalists", completed: 2, total: 20,
+    qualified: 1, remaining_seconds: 90, active: true, resumable: true, ...extra};
+}
+
+test("live stage updates even while the saved result run ID stays the same", () => {
+  const {context, element} = client();
+  context.current = {state: "missing", rows: [], summary: {run_id: "same"}, source_reports: [], network: "mobile", progress: liveProgress()};
+  vm.runInContext("render(current)", context);
+  assert.match(element("progress-label").textContent, /Sustained finalist/);
+  assert.match(element("progress-meta").textContent, /2 \/ 20.*1 qualified.*About 2 min/);
+  assert.equal(element("scan-progress").value, 2);
+  assert.equal(element("network-label").textContent, "Network: mobile");
+  context.current.progress.completed = 3;
+  vm.runInContext("render(current)", context);
+  assert.equal(element("scan-progress").value, 3);
+  assert.equal(element("results").children.length, 0);
+});
+
+test("resume and recheck commands keep the exact mode and safe network label", () => {
+  const {context, element} = client();
+  context.current = {state: "missing", rows: [], summary: {}, source_reports: [], network: "mobile", progress: liveProgress({active: false, stage: "stopped", command: "recheck"})};
+  vm.runInContext("render(current)", context);
+  assert.equal(element("copy-resume").hidden, false);
+  assert.equal(vm.runInContext("terminalCommand(current, true)", context), "python main.py recheck --mode mtproto --network mobile --resume");
+  assert.equal(vm.runInContext("terminalCommand(current, false, true)", context), "python main.py recheck --mode mtproto --network mobile");
+  context.current.network = "wifi; arbitrary command";
+  assert.match(vm.runInContext("terminalCommand(current)", context), /--network default$/);
+  assert.doesNotMatch(vm.runInContext("terminalCommand(current)", context), /arbitrary/);
+});
+
+test("stale heartbeat is never shown as an active scan or resumable instruction", () => {
+  const {context, element} = client();
+  context.current = {state: "missing", rows: [], summary: {}, source_reports: [], network: "mobile", progress_state: "stale", progress: liveProgress({updated_at: new Date(Date.now() - 600000).toISOString()})};
+  vm.runInContext("render(current)", context);
+  assert.match(element("progress-meta").textContent, /heartbeat expired/);
+  assert.equal(element("copy-resume").hidden, true);
+  assert.equal(element("scan-progress").value, 0);
+});
+
+test("history is plain past evidence and cannot create connection actions", () => {
+  const {context, element} = client();
+  context.current = {state: "missing", rows: [], summary: {}, source_reports: [], network: "mobile", history: [
+    {mode: "mtproto", network: "mobile", server: "<script>alert(1)</script>", port: 443, last_tested: Date.now()/1000,
+      successes: 7, attempts: 8, p95_ms: 120, qualified: true, historical_successes: 14, historical_attempts: 16, run_count: 2,
+      tg_link: "tg://proxy"},
+    {mode: "mtproto", network: "other", server: "other-network", port: 443}, null,
+  ]};
+  vm.runInContext("render(current)", context);
+  const history = element("history-list");
+  assert.equal(history.children.length, 1);
+  assert.match(allText(history), /qualified at that time.*14 \/ 16 across 2 runs/);
+  assert.equal(history.children[0].children.length, 0);
+  assert.equal(element("results").children.length, 0);
+});
+
+test("staged labels never promote baseline evidence below the final policy", () => {
+  const {context, element} = client();
+  const row = strongRow();
+  row.strict_policy.min_successes = 7;
+  context.current = {state: "ready", source_reports: [], rows: [row], summary: {
+    strategy: "staged", stage: "stopped", provisional: true, interrupted: true,
+    verification_profile: "telegram_session", tested: 1, verified: 1, strict_verified: 1, transport_reachable: 1,
+  }};
+  vm.runInContext("render(current, true)", context);
+  assert.equal(element("count-verified").textContent, "0");
+  assert.equal(element("results").children.length, 0);
+  assert.match(element("partial-note").textContent, /baseline-only candidates do not qualify/);
+});
+
+test("source quality and cooldown remain visible with attribution counts", () => {
+  const {context, element} = client();
+  context.current = {state: "ready", rows: [], summary: {}, source_reports: [
+    {name: "feed", status: "error", count: 0, checked: 9, qualified: 2, cooldown_until: Date.now()/1000 + 1800, error: "Cooling down"},
+  ]};
+  vm.runInContext("render(current, true)", context);
+  assert.match(allText(element("source-list")), /9 checked.*2 qualified.*next retry.*Cooling down/);
+  assert.equal(element("source-summary").textContent, "Sources reached: 0 / 1");
+});

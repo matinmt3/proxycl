@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 import math
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from tester.secrets import decode_secret
+from tester.secrets import decode_secret, normalize_port, normalize_server
 
 DEFAULT_OUTPUT_FOLDER = Path(__file__).resolve().parents[1] / "output"
 DEFAULT_DATA_FILE = DEFAULT_OUTPUT_FOLDER / "proxy.json"  # v2 compatibility
@@ -18,11 +18,17 @@ PROTOCOLS = ("http", "https", "socks4", "socks5")
 SORT_FIELDS = ("score", "avg_latency_ms", "success_rate", "stability", "telegram_p95_ms")
 COUNT_FIELDS = ("collected", "selected", "tested", "verified", "eligible", "displayed")
 SESSION_METRICS = ("telegram_median_ms", "telegram_p95_ms", "telegram_jitter_ms", "reliability_lower_bound")
+AUXILIARY_MAX_BYTES = 1024 * 1024
+PROGRESS_MAX_AGE_SECONDS = 180
+STAGES = ("prefilter", "baseline", "finalists", "complete", "stopped")
 
 
 def number(value):
-    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
-        return value
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+            return value
+    except OverflowError:
+        pass
     return None
 
 
@@ -266,6 +272,25 @@ def _validate_summary(summary: dict) -> None:
             and partial != 0
         ):
             raise ValueError("Invalid complete/partial retry counts")
+    if "strategy" in summary and summary["strategy"] not in ("staged", "single"):
+        raise ValueError("Invalid scan strategy")
+    if "stage" in summary and summary["stage"] not in STAGES:
+        raise ValueError("Invalid scan stage")
+    if "network" in summary and not _network_label(summary["network"]):
+        raise ValueError("Invalid scan network")
+    for field in ("resumed", "provisional"):
+        if field in summary and type(summary[field]) is not bool:
+            raise ValueError("Invalid staged scan flag")
+    for field in (
+        "prefilter_tested",
+        "prefilter_passed",
+        "baseline_tested",
+        "finalist_selected",
+        "finalist_completed",
+        "finalist_attempts",
+    ):
+        if field in summary and (type(summary[field]) is not int or summary[field] < 0):
+            raise ValueError("Invalid staged scan count")
 
 
 def _validate_health(rows: list) -> None:
@@ -290,7 +315,7 @@ def _validate_health(rows: list) -> None:
             raise ValueError("Invalid result attempts")
 
 
-def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
+def _saved_snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
     """Read summary and rows exactly once; never fall back across proxy modes."""
     mode = validate_mode(mode)
     root = Path(output_folder)
@@ -349,6 +374,8 @@ def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
             raise ValueError("Invalid snapshot schema")
         json.dumps(raw, allow_nan=False)
         _validate_summary(raw["summary"])
+        if "network" in raw["summary"] and raw["summary"]["network"] != _folder_network(root):
+            raise ValueError("Snapshot belongs to another network")
         _validate_health(raw["rows"])
         profile = raw["summary"].get("verification_profile", "web" if mode == "web" else "transport")
         if profile not in (("web",) if mode == "web" else ("telegram_session", "transport")):
@@ -369,7 +396,7 @@ def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
             if (
                 not isinstance(report, dict)
                 or not isinstance(report.get("name"), str)
-                or report.get("status") not in ("ok", "empty", "error")
+                or report.get("status") not in ("ok", "empty", "error", "cooldown")
                 or type(report.get("count")) is not int
                 or report["count"] < 0
             ):
@@ -377,6 +404,19 @@ def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
             safe = {key: report[key] for key in ("name", "status", "count")}
             if isinstance(report.get("error"), str):
                 safe["error"] = report["error"][:200]
+            for key in ("checked", "qualified", "strict_qualified"):
+                if key in report:
+                    if type(report[key]) is not int or not 0 <= report[key] <= 100_000:
+                        raise ValueError("Invalid source quality count")
+                    safe[key] = report[key]
+            for key in ("cooldown_until", "cooldown_remaining_seconds"):
+                if key in report:
+                    value = number(report[key])
+                    if value is None or value < 0:
+                        raise ValueError("Invalid source cooldown")
+                    safe[key] = value
+            if report.get("quality_attribution") == "first_source_after_deduplication":
+                safe["quality_attribution"] = report["quality_attribution"]
             reports.append(safe)
         rows = _rows(raw["rows"], mode, profile)
         if len(rows) != len(raw["rows"]):
@@ -412,6 +452,17 @@ def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
         return _empty(
             mode, "corrupt", "The saved snapshot has an invalid format. Run a new scan in the terminal."
         )
+
+
+def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
+    """Return saved proof alongside separately validated progress and history."""
+    current = _saved_snapshot(output_folder, mode)
+    folder = Path(output_folder)
+    network = _folder_network(folder)
+    current["network"] = network
+    current["progress"], current["progress_state"] = _progress(folder, mode, network)
+    current["history"], current["history_state"] = _history(folder, mode, network)
+    return current
 
 
 def filter_rows(
@@ -538,3 +589,165 @@ def api_response(route: str, output_folder: Path, parameters: dict[str, list[str
             current["state"] == "ready",
         )
     raise ValueError("Unknown API route")
+
+
+def _network_label(value):
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,32}", value) is not None
+
+
+def _folder_network(folder):
+    return folder.name if folder.parent.name == "networks" and _network_label(folder.name) else "default"
+
+
+def _auxiliary(folder, mode, filename, network):
+    try:
+        with (folder / mode / filename).open("rb") as handle:
+            content = handle.read(AUXILIARY_MAX_BYTES + 1)
+    except FileNotFoundError:
+        return None, "missing"
+    except OSError:
+        return None, "corrupt"
+    try:
+        if len(content) > AUXILIARY_MAX_BYTES:
+            raise ValueError("Helper file is too large")
+        row = json.loads(content)
+        if (
+            not isinstance(row, dict)
+            or type(row.get("version")) is not int
+            or row["version"] != 1
+            or row.get("mode") != mode
+            or row.get("network") != network
+        ):
+            raise ValueError("Invalid helper schema or isolation")
+        return row, "ready"
+    except (ValueError, UnicodeError, RecursionError):
+        return None, "corrupt"
+
+
+def _time_value(value):
+    if not isinstance(value, str) or len(value) > 64:
+        raise ValueError("Invalid progress time")
+    stamp = datetime.fromisoformat(value)
+    if stamp.tzinfo is None:
+        raise ValueError("Progress time needs timezone")
+    return stamp.timestamp()
+
+
+def _progress(folder, mode, network):
+    raw, state = _auxiliary(folder, mode, "progress.json", network)
+    if raw is None:
+        return None, state
+    try:
+        timestamp = _time_value(raw.get("updated_at"))
+        age = datetime.now(timezone.utc).timestamp() - timestamp
+        if age < -60:
+            raise ValueError("Future progress")
+        run_id = raw.get("run_id")
+        if (
+            not isinstance(run_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", run_id)
+            or raw.get("stage") not in STAGES
+            or type(raw.get("active")) is not bool
+            or type(raw.get("resumable")) is not bool
+        ):
+            raise ValueError("Invalid progress metadata")
+        if age > (PROGRESS_MAX_AGE_SECONDS if raw["active"] else 86400):
+            return None, "stale"
+        for key in ("completed", "total", "qualified"):
+            if type(raw.get(key)) is not int or not 0 <= raw[key] <= 1_000_000:
+                raise ValueError("Invalid progress count")
+        if raw["completed"] > raw["total"] or raw["qualified"] > raw["total"]:
+            raise ValueError("Invalid progress totals")
+        remaining = raw.get("remaining_seconds")
+        if remaining is not None and (number(remaining) is None or remaining < 0):
+            raise ValueError("Invalid remaining time")
+        command = raw.get("command", "best10")
+        if command not in ("best10", "recheck"):
+            raise ValueError("Invalid progress command")
+        return {
+            key: raw[key]
+            for key in (
+                "version",
+                "mode",
+                "network",
+                "run_id",
+                "updated_at",
+                "stage",
+                "completed",
+                "total",
+                "qualified",
+                "active",
+                "resumable",
+            )
+        } | {"remaining_seconds": remaining, "command": command}, "ready"
+    except (ValueError, TypeError, OverflowError):
+        return None, "corrupt"
+
+
+def _history(folder, mode, network):
+    raw, state = _auxiliary(folder, mode, "history.json", network)
+    if raw is None:
+        return [], state
+    try:
+        if not isinstance(raw.get("rows"), list) or len(raw["rows"]) > 20:
+            raise ValueError("Invalid history list")
+        rows = []
+        identities = set()
+        now = datetime.now(timezone.utc).timestamp()
+        for row in raw["rows"]:
+            if not isinstance(row, dict) or row.get("mode") != mode or row.get("network") != network:
+                raise ValueError("Invalid history isolation")
+            identity = row.get("identity")
+            if (
+                not isinstance(identity, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", identity)
+                or identity in identities
+            ):
+                raise ValueError("Invalid history identity")
+            identities.add(identity)
+            server, port = normalize_server(row.get("server")), normalize_port(row.get("port"))
+            kind = "web" if mode == "web" else "mtproto"
+            if row.get("kind") != kind or type(row.get("qualified")) is not bool:
+                raise ValueError("Invalid history kind")
+            if row.get("protocol") not in (PROTOCOLS if mode == "web" else ("mtproto",)):
+                raise ValueError("Invalid history protocol")
+            for key in ("successes", "attempts", "run_count", "historical_successes", "historical_attempts"):
+                if type(row.get(key)) is not int or not 0 <= row[key] <= 10_000_000:
+                    raise ValueError("Invalid history counts")
+            if row["successes"] > row["attempts"] or row["historical_successes"] > row["historical_attempts"]:
+                raise ValueError("Invalid history rates")
+            last = number(row.get("last_tested"))
+            p95 = row.get("p95_ms")
+            if (
+                last is None
+                or not 0 < last <= now + 60
+                or p95 is not None
+                and (number(p95) is None or p95 < 0)
+            ):
+                raise ValueError("Invalid history time/latency")
+            run_id = row.get("current_run_id")
+            if not isinstance(run_id, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", run_id):
+                raise ValueError("Invalid history run")
+            safe = {
+                key: row[key]
+                for key in (
+                    "identity",
+                    "kind",
+                    "protocol",
+                    "network",
+                    "mode",
+                    "last_tested",
+                    "successes",
+                    "attempts",
+                    "qualified",
+                    "p95_ms",
+                    "current_run_id",
+                    "run_count",
+                    "historical_successes",
+                    "historical_attempts",
+                )
+            }
+            rows.append(safe | {"server": server, "port": port})
+        return rows, "ready"
+    except (ValueError, TypeError, OverflowError):
+        return [], "corrupt"
