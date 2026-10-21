@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import os
 from dataclasses import replace
@@ -39,6 +40,9 @@ class ParallelTester:
     def __init__(self, config: AppConfig):
         self.config = config
         self.partial_results: list[ProxyResult] = []
+        self.initial_results: list[ProxyResult] = []
+        self.on_sample = None
+        self._current_results: list[ProxyResult | None] = []
 
     def _new_result(self, proxy: Proxy) -> ProxyResult:
         settings = self.config.testing
@@ -62,7 +66,7 @@ class ParallelTester:
         if result is None:
             result = self._new_result(proxy)
         settings = self.config.testing
-        for attempt in range(max(1, settings.retries)):
+        for attempt in range(len(result.samples), max(1, settings.retries)):
             if settings.mtproto_profile == "telegram_session":
                 from tester.mtproto import test_proxy_strict
 
@@ -82,6 +86,10 @@ class ParallelTester:
                     handshake_timeout=settings.timeout_seconds,
                 )
             result.samples.append(sample)
+            if self.on_sample is not None:
+                notification = self.on_sample(result)
+                if inspect.isawaitable(notification):
+                    await notification
         return result
 
     async def run_async(self, proxies: list[Proxy]) -> list[ProxyResult]:
@@ -90,13 +98,15 @@ class ParallelTester:
             return []
         workers = mtproto_worker_count(self.config.testing, len(proxies))
         bar = progress_bar(total=len(proxies), desc=f"Testing ({workers} workers)")
-        results: list[ProxyResult | None] = [None] * len(proxies)
+        initial = {result.proxy.key(): result for result in self.initial_results}
+        results: list[ProxyResult | None] = [initial.get(proxy.key()) for proxy in proxies]
+        self._current_results = results
         pending = iter(enumerate(proxies))
 
         async def worker() -> None:
             # next() occurs before await: each worker takes a distinct candidate.
             for index, proxy in pending:
-                result = results[index] = self._new_result(proxy)
+                result = results[index] = results[index] or self._new_result(proxy)
                 await self._test_one(proxy, result)
                 bar.update(1)
 

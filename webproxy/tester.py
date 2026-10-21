@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import contextlib
 import logging
 import re
@@ -251,12 +252,15 @@ class WebTester:
         self.expected_status = expected_status
         self.ssl_context = ssl_context
         self.partial_results: list[ProxyResult] = []
+        self.initial_results: list[ProxyResult] = []
+        self.on_sample = None
+        self._current_results: list[ProxyResult | None] = []
 
     async def _test_one(self, proxy: WebProxy, result: ProxyResult | None = None) -> ProxyResult:
         if result is None:
             result = ProxyResult(proxy)
         settings = self.config.testing
-        for _ in range(max(1, settings.retries)):
+        for _ in range(len(result.samples), max(1, settings.retries)):
             sample = await test_proxy_once(
                 proxy,
                 settings.connect_timeout_seconds,
@@ -266,6 +270,10 @@ class WebTester:
                 ssl_context=self.ssl_context,
             )
             result.samples.append(sample)
+            if self.on_sample is not None:
+                notification = self.on_sample(result)
+                if inspect.isawaitable(notification):
+                    await notification
         return result
 
     async def run_async(self, proxies: list[WebProxy]) -> list[ProxyResult]:
@@ -277,12 +285,14 @@ class WebTester:
 
         workers = worker_count(self.config.testing.workers, len(proxies))
         bar = progress_bar(total=len(proxies), desc=f"Web HTTPS probe ({workers} workers)")
-        results: list[ProxyResult | None] = [None] * len(proxies)
+        initial = {result.proxy.key(): result for result in self.initial_results}
+        results: list[ProxyResult | None] = [initial.get(proxy.key()) for proxy in proxies]
+        self._current_results = results
         pending = iter(enumerate(proxies))
 
         async def worker() -> None:
             for index, proxy in pending:
-                result = results[index] = ProxyResult(proxy)
+                result = results[index] = results[index] or ProxyResult(proxy)
                 await self._test_one(proxy, result)
                 bar.update(1)
 
