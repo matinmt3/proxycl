@@ -114,6 +114,15 @@ def test_checkpoint_roundtrip_and_completed_marker(tmp_path):
         checkpoint.load()
 
 
+def test_checkpoint_supports_long_valid_faketls_candidate_keys(tmp_path):
+    domain = "a" * 60 + "." + "b" * 60 + ".example"
+    proxy = Proxy("example.org", 443, "ee" + "11" * 16 + domain.encode().hex())
+    assert len(proxy.key()) > 256
+    checkpoint = store(tmp_path)
+    checkpoint.save([proxy], {"finalist_attempts": {proxy.key(): 2}})
+    assert checkpoint.load()[1]["finalist_attempts"][proxy.key()] == 2
+
+
 def test_checkpoint_guards_config_network_and_mode(tmp_path):
     checkpoint = store(tmp_path)
     checkpoint.save([mtproxy()], {})

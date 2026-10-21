@@ -220,7 +220,7 @@ def _json_tree(value, *, now, max_age=None, depth=0):
         return
     if isinstance(value, dict):
         for key, item in value.items():
-            if not isinstance(key, str) or len(key) > 256:
+            if not isinstance(key, str) or len(key) > 2048:
                 raise ValueError("Saved state has an invalid field name")
             normalized = key.lower().replace("-", "_")
             if normalized in _PRIVATE_FIELDS:
