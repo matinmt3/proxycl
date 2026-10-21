@@ -154,7 +154,7 @@ def test_publisher_declared_tls_feed_keeps_tls_for_bare_endpoints():
     assert [proxy.uri() for proxy in proxies] == ["https://198.51.100.3:8443"]
 
 
-def test_default_mtproto_collection_succeeds_when_direct_telegram_access_is_blocked(monkeypatch):
+def test_default_mtproto_collection_succeeds_when_direct_telegram_access_is_blocked(monkeypatch, tmp_path):
     """Defaults must collect every remote feed without needing the blocked t.me host."""
     import httpx
 
@@ -163,6 +163,7 @@ def test_default_mtproto_collection_succeeds_when_direct_telegram_access_is_bloc
     fixture_path = Path(__file__).parent / "fixtures" / "mtproto_mirror_samples.json"
     samples = json.loads(fixture_path.read_text(encoding="utf-8"))
     config = AppConfig.load()
+    config.output.folder = str(tmp_path / "output")
     remote = [source for source in config.sources if source.enabled and not source.url.startswith("file://")]
     client_type = httpx.AsyncClient
 

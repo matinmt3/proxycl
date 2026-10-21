@@ -9,6 +9,7 @@ from typing import Dict, List
 
 import httpx
 
+from collector.health import SourceHealth, quality_counts, source_identity
 from collector.sources import parse_json_feed, parse_text_blob
 from config.loader import AppConfig, SourceConfig
 from utils.models import Proxy
@@ -22,6 +23,31 @@ class Collector:
     def __init__(self, config: AppConfig):
         self.config = config
         self.source_reports: list[dict] = []
+        self.health = SourceHealth(config, "mtproto")
+        self._enabled_sources: list[SourceConfig] = []
+        self._source_by_proxy: dict[str, str] = {}
+        self._collection_completed = False
+
+    @property
+    def health_rows(self) -> list[dict]:
+        return self.health.rows(self._enabled_sources)
+
+    def record_quality(self, results) -> list[dict]:
+        if not self._collection_completed:
+            return self.source_reports
+        counts = quality_counts(results, self._source_by_proxy, self._enabled_sources)
+        seen = set()
+        for source, report in zip(self._enabled_sources, self.source_reports):
+            identity = source_identity(source)
+            report.update(
+                counts[identity]
+                if identity not in seen
+                else {"checked": 0, "qualified": 0, "strict_qualified": 0}
+            )
+            report["quality_attribution"] = "first_source_after_deduplication"
+            seen.add(identity)
+        self.health.record_quality(self._enabled_sources, counts)
+        return self.source_reports
 
     async def _fetch_url(self, client: httpx.AsyncClient, url: str) -> str:
         async with client.stream("GET", url, timeout=15.0, follow_redirects=True) as resp:
@@ -73,6 +99,7 @@ class Collector:
             logger.warning("Source '%s' failed: %s", source.name, detail)
             if report is not None:
                 report.update(status="error", count=0, error=detail)
+                report["_health_network_error"] = isinstance(exc, (httpx.HTTPError, OSError))
             return []
 
         logger.info("Source '%s' -> %d proxies", source.name, len(proxies))
@@ -82,6 +109,9 @@ class Collector:
 
     async def collect_async(self) -> List[Proxy]:
         self.source_reports = []
+        self._source_by_proxy = {}
+        self._enabled_sources = []
+        self._collection_completed = False
         enabled = [s for s in self.config.sources if s.enabled]
         if not enabled:
             logger.warning("No enabled sources configured.")
@@ -95,6 +125,10 @@ class Collector:
         ) as client:
 
             async def fetch(source: SourceConfig, report: dict) -> List[Proxy]:
+                cooldown = self.health.cooldown_report(source)
+                if cooldown is not None:
+                    report.update(cooldown)
+                    return []
                 async with semaphore:
                     return await self._fetch_source(client, source, report)
 
@@ -104,11 +138,16 @@ class Collector:
 
         # Publish only a completed collection, in config order regardless of
         # completion timing. Cancellation keeps incomplete reports unpublished.
+        network_errors = [bool(report.pop("_health_network_error", False)) for report in reports]
+        self.health.record_collection(enabled, reports, network_errors)
         self.source_reports = reports
+        self._enabled_sources = enabled
+        self._collection_completed = True
         merged: Dict[str, Proxy] = {}
-        for group in results:
+        for source, group in zip(enabled, results):
             for proxy in group:
                 merged.setdefault(proxy.key(), proxy)
+                self._source_by_proxy.setdefault(proxy.key(), source_identity(source))
 
         logger.info("Collected %d unique proxies from %d sources", len(merged), len(enabled))
         return list(merged.values())
