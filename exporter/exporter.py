@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import List
 
 from config.loader import OutputConfig
-from utils.models import ProxyResult
+from utils.models import Proxy, ProxyResult
 
 logger = logging.getLogger("mtselector.exporter")
 
@@ -22,12 +22,22 @@ def eligible_results(results: List[ProxyResult], output_cfg: OutputConfig) -> Li
     return [
         r
         for r in results
-        if r.successes > 0
+        if (
+            not isinstance(r.proxy, Proxy)
+            or (
+                r.strict_eligible
+                and r.strict_successes >= output_cfg.mtproto_min_successes
+                and r.strict_successes / max(1, r.attempts) >= output_cfg.mtproto_min_success_rate
+                and r.telegram_p95_ms <= output_cfg.mtproto_max_ping_p95_ms
+                and r.telegram_jitter_ms <= output_cfg.mtproto_max_ping_jitter_ms
+            )
+        )
+        and r.successes > 0
         and math.isfinite(r.score)
         and r.score >= output_cfg.min_score
-        and r.avg_latency_ms is not None
-        and math.isfinite(r.avg_latency_ms)
-        and 0 <= r.avg_latency_ms <= output_cfg.max_latency_ms
+        and r.ranking_latency_ms is not None
+        and math.isfinite(r.ranking_latency_ms)
+        and 0 <= r.ranking_latency_ms <= output_cfg.max_latency_ms
     ]
 
 
@@ -88,6 +98,16 @@ class Exporter:
             "stability",
             "timeout_rate",
             "last_failure_reason",
+            "verification_profile",
+            "strict_eligible",
+            "strict_successes",
+            "dc_ids_verified",
+            "ping_count",
+            "telegram_median_ms",
+            "telegram_p95_ms",
+            "telegram_jitter_ms",
+            "reliability_lower_bound",
+            "strict_policy",
             self.link_field,
         ]
         with StringIO(newline="") as f:
@@ -95,6 +115,8 @@ class Exporter:
             writer.writeheader()
             for r in results:
                 d = r.to_dict()
+                for key in ("dc_ids_verified", "strict_policy"):
+                    d[key] = json.dumps(d.get(key), separators=(",", ":"))
                 writer.writerow({k: d.get(k) for k in fieldnames})
             return self._write(filename, f.getvalue())
 
@@ -131,7 +153,9 @@ class Exporter:
         for i, r in enumerate(top, 1):
             lines.append(
                 f"#{i}  {r.proxy.server}:{r.proxy.port}\n"
-                f"    Speed: {r.avg_latency_ms:.0f} ms   |   Success rate: {r.success_rate * 100:.0f}%   |   Score: {r.score * 100:.1f}%\n"
+                f"    Telegram RTT p95: {r.telegram_p95_ms:.0f} ms | Median: {r.telegram_median_ms:.0f} ms | Jitter: {r.telegram_jitter_ms:.0f} ms\n"
+                f"    Sessions: {r.strict_successes}/{r.attempts} | Matched pings: {r.ping_count} | Success: {r.success_rate * 100:.0f}% | Score: {r.score * 100:.1f}%\n"
+                f"    Setup: {r.avg_latency_ms:.0f} ms\n"
                 f"    Link:  {self.connection_link(r)}\n"
             )
 

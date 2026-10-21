@@ -33,6 +33,10 @@ def write_snapshot(root, mode, rows, *, completed="2026-10-08T12:00:00+00:00"):
         ],
         "rows": rows,
     }
+    if mode != "web" and rows and all(row.get("verification_profile") == "telegram_session" for row in rows):
+        body["summary"].update(
+            verification_profile="telegram_session", strict_verified=len(rows), transport_reachable=len(rows)
+        )
     (folder / "snapshot.json").write_text(json.dumps(body), encoding="utf-8")
     return body
 

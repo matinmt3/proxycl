@@ -18,7 +18,7 @@
           <path d="M24 3v21l15 15M3 24h12M24 36v9M36 24h9"/>
           <circle class="radar-dot" cx="24" cy="24" r="3"/>
         </svg>
-        <div><p class="eyebrow">LOCAL PROXY RADAR <span class="version">V3.1</span></p><h1>REVMAMAD</h1></div>
+        <div><p class="eyebrow">LOCAL PROXY RADAR <span class="version">V3.2</span></p><h1>REVMAMAD</h1></div>
       </div>
       <div class="toolbar">
         <button id="refresh" class="button" type="button">Refresh</button>
@@ -37,7 +37,8 @@
         <div><p class="eyebrow" id="mode-label">TELEGRAM TRANSPORT</p><h2 id="mode-title">Your best MTProto connections</h2></div>
         <span class="pill" id="connection-state">Local results</span>
       </div>
-      <p id="mode-description" class="description">Verified MTProto responses, ranked by score with latency breaking ties.</p>
+      <p id="mode-description" class="description">Strict Telegram server checks with encrypted ping RTT and independent reconnect samples.</p>
+      <p id="verification-status" class="measurement-note" role="status">Re-scan old transport results for strict Telegram verification.</p>
       <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true">Loading the last saved scan…</p>
       <p id="partial-note" class="partial-note" hidden>Stopped scan / partial results.</p>
 
@@ -48,7 +49,7 @@
       <div class="metrics" aria-label="Scan counts">
         <article class="metric"><span>Selected</span><strong id="count-selected">—</strong><small>Candidates to test</small></article>
         <article class="metric"><span>Tested</span><strong id="count-tested">—</strong><small id="tested-description">Completed checks</small></article>
-        <article class="metric accent"><span>Verified</span><strong id="count-verified">—</strong><small>Passed the probe</small></article>
+        <article class="metric accent"><span id="verified-label">Strict passed</span><strong id="count-verified">—</strong><small id="verified-description">Qualified session checks</small></article>
         <article class="metric"><span>Shown</span><strong id="count-displayed">0</strong><small>Current results</small></article>
       </div>
 
@@ -61,7 +62,7 @@
         <div class="section-heading"><h2 id="results-title">Top verified results</h2><p id="result-count" class="muted">Up to 10 results</p></div>
         <div class="filters">
           <div class="field search-field"><label for="search">Search</label><input id="search" type="search" placeholder="Endpoint or source" autocomplete="off"></div>
-          <div class="field"><label for="sortBy">Sort results</label><select id="sortBy"><option value="score">Best rank</option><option value="avg_latency_ms">Lowest latency</option><option value="success_rate">Highest success</option><option value="stability">Most stable</option></select></div>
+          <div class="field"><label for="sortBy">Sort results</label><select id="sortBy"><option value="score">Best rank</option><option id="telegram-rtt-sort" value="telegram_p95_ms">Lowest Telegram RTT p95</option><option id="probe-duration-sort" value="avg_latency_ms">Shortest probe duration (diagnostic)</option><option value="success_rate">Highest sample pass rate</option><option id="consistency-sort" value="stability">Probe consistency (diagnostic)</option></select></div>
           <div class="field" id="protocol-field" hidden><label for="protocol">Protocol</label><select id="protocol"><option value="all">All protocols</option><option value="http">HTTP</option><option value="https">HTTPS · TLS to proxy</option><option value="socks4">SOCKS4</option><option value="socks5">SOCKS5</option></select></div>
           <div class="field"><label for="limit">Show</label><select id="limit"><option value="10">Top 10</option><option value="25">25 results</option><option value="50">50 results</option><option value="100">100 results</option></select></div>
         </div>
@@ -79,7 +80,7 @@
         <code id="scan-command" dir="ltr">python main.py best10 --mode mtproto --count ALL</code>
         <button id="copy-command" class="button quiet" type="button">Copy command</button>
       </aside>
-      <p class="verification-note" id="verification-note">A matched MTProto response checks reachability at scan time; later connectivity can change.</p>
+      <p class="verification-note" id="verification-note">Telegram RTT measures encrypted ping round trips, not download throughput or an authorized messaging session.</p>
     </section>
     <footer>REVMAMAD <span>Local assets. Separate scans. Verified results.</span></footer>
   </main>

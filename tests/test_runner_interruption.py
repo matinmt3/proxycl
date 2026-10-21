@@ -28,7 +28,14 @@ class Progress:
 @pytest.fixture(params=["mtproto", "web"])
 def pool(request, monkeypatch):
     config = SimpleNamespace(
-        testing=SimpleNamespace(workers=2, retries=2, connect_timeout_seconds=1, timeout_seconds=2)
+        testing=SimpleNamespace(
+            workers=2,
+            retries=2,
+            connect_timeout_seconds=1,
+            timeout_seconds=2,
+            mtproto_profile="transport",
+            mtproto_workers=16,
+        )
     )
     bar = Progress()
     if request.param == "mtproto":
@@ -122,10 +129,14 @@ def test_native_sigint_in_subprocess_returns_observed_samples_and_closes_sockets
     assert report["signal"] == "SIGINT"
     assert report["exception"] == "ScanInterrupted"
     assert report["rows"] == [
-        {"server": "completed.example", "attempts": 2, "successes": 1},
+        {
+            "server": "completed.example",
+            "attempts": 3 if mode == "mtproto" else 2,
+            "successes": 3 if mode == "mtproto" else 1,
+        },
         {"server": "partial.example", "attempts": 1, "successes": 1},
     ]
-    assert report["opened"] == report["closed"] == 5
+    assert report["opened"] == report["closed"] == (6 if mode == "mtproto" else 5)
 
 
 @pytest.mark.parametrize("mode", ["mtproto", "web"])
@@ -166,7 +177,7 @@ def test_native_sigint_cli_publishes_observed_top10_and_preserves_last_completed
         )
     )
     assert report["cli_exit"] == 0
-    assert report["opened"] == report["closed"] == 5
+    assert report["opened"] == report["closed"] == (5 if mode == "web" else 6)
     folder = tmp_path / "results" / mode
     snapshot = json.loads((folder / "snapshot.json").read_text(encoding="utf-8"))
     top10 = json.loads((folder / "top10.json").read_text(encoding="utf-8"))
@@ -175,14 +186,35 @@ def test_native_sigint_cli_publishes_observed_top10_and_preserves_last_completed
     assert {
         field: snapshot["summary"][field]
         for field in ("selected", "tested", "skipped", "fully_tested", "partial_tested", "retry_count")
-    } == {"selected": 4, "tested": 2, "skipped": 2, "fully_tested": 1, "partial_tested": 1, "retry_count": 2}
-    assert [(row["server"], row["attempts"], row["successes"]) for row in top10] == [
-        ("partial.example", 1, 1),
-        ("completed.example", 2, 1),
-    ]
+    } == {
+        "selected": 4,
+        "tested": 2,
+        "skipped": 2,
+        "fully_tested": 1,
+        "partial_tested": 1,
+        "retry_count": 2 if mode == "web" else 3,
+    }
+    observed = json.loads((folder / "observations.json").read_text(encoding="utf-8"))
+    assert {row["server"]: row["attempts"] for row in observed["rows"]} == {
+        "completed.example": 2 if mode == "web" else 3,
+        "partial.example": 1,
+    }
+    assert all(len(row["samples"]) == row["attempts"] for row in observed["rows"])
+    expected = (
+        [("partial.example", 1, 1), ("completed.example", 2, 1)]
+        if mode == "web"
+        else [("completed.example", 3, 3)]
+    )
+    assert [(row["server"], row["attempts"], row["successes"]) for row in top10] == expected
     assert snapshot["rows"] == top10
-    assert "partial.example" in result.stdout and "completed.example" in result.stdout
-    assert readable.index("partial.example") < readable.index("completed.example")
+    assert "completed.example" in result.stdout
+    if mode == "web":
+        assert "partial.example" in result.stdout
+        assert readable.index("partial.example") < readable.index("completed.example")
+    else:
+        assert "partial.example" not in readable
+        assert snapshot["summary"]["strict_verified"] == 1
+        assert top10[0]["strict_eligible"] is True and top10[0]["verification_profile"] == "telegram_session"
     assert "untested.example" not in readable and "never-started.example" not in readable
     if mode == "telegram":
         assert all(row["web_link"].startswith("https://t.me/proxy?") for row in top10)

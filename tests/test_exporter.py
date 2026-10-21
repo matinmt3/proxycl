@@ -11,13 +11,17 @@ from utils.models import TestSample as Sample
 
 
 def result(server="example.com", latency=25, success=True):
-    item = ProxyResult(Proxy(server, 443, "01" * 16))
+    item = ProxyResult(Proxy(server, 443, "01" * 16), verification_profile="telegram_session")
     item.samples = [
         Sample(
             success,
             total_latency_ms=latency if success else None,
             failure_reason=FailureReason.NONE if success else FailureReason.TCP_REFUSED,
+            verification_level="telegram_session" if success else "transport",
+            dc_id=dc,
+            ping_rtts_ms=[latency] * 3 if success else [],
         )
+        for dc in (2, 4, 2)
     ]
     item.score = score_result(item, ScoringConfig())
     return item

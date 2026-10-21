@@ -1,6 +1,6 @@
-# REVMAMAD v3.1 — MTProto, Telegram Links + HTTP/SOCKS
+# REVMAMAD v3.2 — Strict Telegram Checks + HTTP/SOCKS
 
-Collect, verify, rank and export MTProto proxies as `tg://` or Telegram HTTPS share links, and test HTTP/SOCKS internet proxies separately. Choose ALL or a candidate count, then see up to ten verified eligible results in the terminal and local mobile dashboard. Ctrl+C during probing saves the real results collected so far.
+Test Telegram server identity, encrypted ping replies and independent reconnects through MTProto proxies. Export qualifying endpoints as `tg://` or Telegram HTTPS share links; test HTTP/SOCKS internet proxies separately. Choose ALL or a candidate count, then see up to ten eligible results. Ctrl+C retains finished samples, without promoting incomplete evidence to a usable link.
 
 ## Install or update in Termux
 
@@ -22,7 +22,7 @@ Overrides: `REVMAMAD_DIR`, `REVMAMAD_REPO` and `REVMAMAD_BRANCH`. A branch overr
 
 | Menu | Action |
 | --- | --- |
-| 1 | Scan MTProto; show and save up to ten verified eligible results |
+| 1 | Strict MTProto checks; show and save up to ten eligible `tg://` links |
 | 2 | Scan Telegram Web Link; export `https://t.me/proxy?...` links |
 | 3 | Scan HTTP/SOCKS internet proxies |
 | 4 | Open the local dashboard |
@@ -30,6 +30,8 @@ Overrides: `REVMAMAD_DIR`, `REVMAMAD_REPO` and `REVMAMAD_BRANCH`. A branch overr
 | 6 | Exit |
 
 Each scan offers **1 ALL / 2 Custom count / 0 Back**. A custom N limits unique candidates to test after deduplication and source interleaving; it does not request N successful results. ALL tests every collected candidate. Large HTTP/SOCKS collections can take a long time, so start with a small N on a phone. The terminal shows counts, progress and failed attempts. Fewer than ten results means fewer passed the probe and output filters.
+
+Strict Telegram checks cost more than a TCP connection or `resPQ` response. Start with a small candidate count; MTProto concurrency defaults to 16, independently of the HTTP/SOCKS worker setting.
 
 ```bash
 python main.py best10 --mode mtproto --count ALL
@@ -48,7 +50,7 @@ Existing `run`, `best10`, `collect`, `benchmark`, `export`, `scheduler`, `top`, 
 
 ## Stop a scan and keep its results
 
-Press **Ctrl+C during probing** to stop and show up to ten verified results so far. Exports retain actual finished attempts, including finished samples from an incomplete retry sequence. Pending attempts are not invented as failures. Success percentages use the number of finished attempts; the terminal displays sample counts. The menu returns after showing results, a direct stopped-scan command returns success after saving them, and scheduled runs stop their loop.
+Press **Ctrl+C during probing** to stop and show qualifying results so far. Finished samples remain in accounting; pending attempts are not invented as failures. Strict requirements still apply: two successful reconnects out of two interrupted attempts do not qualify under the minimum of three. The menu returns after showing results, a direct stopped-scan command returns success after saving them, and scheduled runs stop their loop.
 
 The saved summary marks `interrupted: true` and records `selected`, `tested` (at least one finished attempt), `skipped` (no finished attempts), `fully_tested`, `partial_tested` and the configured `retry_count`. The current `snapshot.json` shows this partial run; `completed_snapshot.json` retains the last full run. A normal completed scan updates both. Ctrl+C during collection, before probing begins, leaves the previous snapshot intact. Benchmark still exports nothing.
 
@@ -56,7 +58,7 @@ The saved summary marks `interrupted: true` and records `selected`, `tested` (at
 
 Menu 4 uses Python's standard-library server; the lightweight installation includes everything it needs. Open the printed address, normally **http://127.0.0.1:8000**, if the browser does not open automatically. Keep that terminal session running; Ctrl+C stops the server.
 
-The dashboard has separate MTProto, Telegram Web Link and HTTP/SOCKS tabs, scan time and counts, interrupted-run labels, source health, failure details, search, sorting, HTTP/SOCKS protocol filtering and copyable connection links. Refresh/pause controls manage updates; polling pauses while the page is hidden. CSS, JavaScript and fonts are local or system-provided, so the interface has no CDN dependency. It handles no scan, empty results, stale data, invalid snapshots and filters with no matches. Scans start in the terminal.
+The dashboard has separate MTProto, Telegram Web Link and HTTP/SOCKS tabs, scan counts, interrupted-run labels, source health, filtering and copyable qualifying links. Strict cards show **Telegram RTT p95**, session passes as **n/N**, matched pong/DC counts and a labeled reliability lower bound. The separate **Probe duration** includes setup time. Old transport-only results are read-only evidence and request a new strict scan; malformed strict metadata cannot enable connection actions. Refresh/pause controls manage updates; polling pauses while hidden. Assets are local, with no CDN dependency. Scans start in the terminal.
 
 Optional desktop/container adapter:
 
@@ -91,6 +93,13 @@ source_catalog: config/sources.yaml
 sources: []                   # disable MTProto/Telegram discovery; keep HTTP/SOCKS
 testing:
   workers: 50
+  mtproto_profile: telegram_session
+  mtproto_workers: 16
+  auth_timeout_seconds: 12
+  ping_timeout_seconds: 3
+  ping_count: 3
+  ping_interval_seconds: 0.5
+  telegram_dc_ids: [2, 4]
   timeout_seconds: 5
   connect_timeout_seconds: 3
   retries: 3
@@ -99,17 +108,25 @@ output:
   min_score: 0
   max_latency_ms: 5000
   top_sizes: [10, 50, 100]
+  mtproto_min_successes: 3
+  mtproto_min_success_rate: 0.8
+  mtproto_max_ping_p95_ms: 1500
+  mtproto_max_ping_jitter_ms: 500
 ```
 
 Feeds support text, JSON and local `file://` lists. MTProto also supports public Telegram channel previews and `tg://proxy`/`https://t.me/proxy` links. Failed feeds are isolated and reported; both collectors enforce 4 MiB per source and eight concurrent reads. Testing workers and timeouts are bounded. Public Web feed entries with credentials are excluded.
 
 ## Verification, ranking and output
 
-**MTProto / Telegram Web Link:** raw, `dd` padded-intermediate and `ee` FakeTLS transports require a nonce-matched `req_pq_multi`/`resPQ` response. The two modes use the same probe; their connection-link formats differ. A `https://t.me/proxy?...` link carries the actual MTProto endpoint/secret, rather than acting as an HTTP proxy. This is an unauthenticated transport check; it does not log into Telegram or verify an authorized messaging session. See [protocol notes](docs/PERFORMANCE.md).
+**MTProto / Telegram Web Link:** both modes use strict `telegram_session` verification by default. They complete Telegram's RSA_PAD/DH authorization-key exchange against pinned Telegram RSA keys, then require matched encrypted MTProto 2.0 ping/pong replies. Defaults are three independent reconnects, rotating DC 2, 4, 2, with three pings per connection spaced 0.5 seconds apart. Qualification requires at least three successful reconnects, an observed pass rate of at least 80%, both configured DCs, p95 RTT at most 1,500 ms and jitter at most 500 ms. `min_score: 0` cannot bypass these checks.
+
+This establishes server-authenticated protocol responsiveness at test time. It does not log into an account, send messages or measure file-download throughput. No phone number, login code or Telegram API credentials are needed. A fresh MAIN authorization key stays in RAM; bounded `destroy_auth_key` cleanup is attempted. Failed cleanup can leave an unused server-side key with no account association. A `https://t.me/proxy?...` link is an MTProto share link, not an HTTP proxy. See [protocol and metric definitions](docs/PERFORMANCE.md).
+
+`testing.mtproto_profile: transport` retains the old nonce-matched `resPQ` diagnostic. It does not satisfy strict verification or produce usable Telegram link exports. Legacy snapshots are never silently upgraded to strict results.
 
 **HTTP/SOCKS (`web`):** HTTP CONNECT, certificate-verified HTTPS-to-proxy, SOCKS4a or SOCKS5 must reach `https://www.gstatic.com/generate_204` through the proxy, negotiate certificate-verified TLS to that origin and receive HTTP 204. There is no direct connection fallback. Success measures reachability to that origin at scan time. An `https` filename often describes HTTP CONNECT support; an explicit `https://` proxy URI means TLS to the proxy. Certificate checks remain enabled.
 
-All three modes rank by **composite score descending**, then latency ascending and endpoint key. Reliability, latency, stability and timeouts contribute to the score. Console, readable links and `top10.json` use the same eligible top ten. Failed candidates and those outside score/latency limits are excluded.
+All modes use a common ranking order across console, readable links and `top10.json`. Strict Telegram scores use reconnect confidence, encrypted-ping p95 RTT and ping jitter; ties use RTT and endpoint key. Three out of three passes are a small sample, with a 95% Wilson lower bound of about 43.8%, not proof of 100% uptime. HTTP/SOCKS retains its existing scoring. Failed or nonqualifying candidates are excluded.
 
 Files are isolated in **`output/mtproto/`**, **`output/telegram/`** and **`output/web/`**:
 
@@ -122,6 +139,7 @@ Files are isolated in **`output/mtproto/`**, **`output/telegram/`** and **`outpu
 | `top10.json`, `top50.json`, `top100.json` | Top-N subsets; top10 is always generated |
 | `snapshot.json` | Latest full or interrupted scan's summary, source reports and eligible rows |
 | `completed_snapshot.json` | Last normally completed scan, retained during interrupted runs |
+| `observations.json` | All completed attempt evidence, including failed and insufficient strict results; no session keys |
 
 A completed empty scan clears its mode's current exports. Files are replaced atomically; the dashboard reads counts and rows from a single snapshot generation. Scheduler modes are manual, continuous and interval.
 
@@ -133,7 +151,7 @@ python -m pytest -q
 python -m ruff check .
 ```
 
-On 2026-10-08, the replacement MTProto catalog fetched **51/51 feeds** and produced **2,303 unique valid candidates**. The unchanged HTTP/SOCKS catalog fetched **64/64 feeds** and produced **163,372 unique valid candidates**. Telegram-host DNS on the validation network points to a private address whose port 443 refuses connections; defaults now use reachable GitHub files. A later MTProto collection returned 2,294 candidates, and a 31-candidate sample produced **one valid raw reply**. Candidate totals are parsing results, not working-proxy counts. These are dated network samples, not availability guarantees.
+The **2026-10-08** source check fetched 51/51 MTProto feeds (2,303 syntax-valid candidates) and 64/64 HTTP/SOCKS feeds (163,372 candidates). A later 31-candidate MTProto sample produced one raw **transport-diagnostic** reply. Those historical checks did not run v3.2 strict verification; source availability and proxy health can change. See [validation evidence](docs/TESTING.md) for current test results and explicitly dated live checks.
 
 See [validation evidence](docs/TESTING.md) for test coverage and release checks. Native Android/Termux installation and Docker execution have not been validated on this host.
 

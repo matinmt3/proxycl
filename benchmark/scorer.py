@@ -18,6 +18,24 @@ def _latency_score(avg_latency_ms: float | None, max_latency_ms: float) -> float
 
 
 def score_result(result: ProxyResult, scoring: ScoringConfig) -> float:
+    if result.verification_profile == "telegram_session":
+        latency = result.telegram_p95_ms
+        if not result.strict_successes or latency is None:
+            return 0.0
+        weights = (
+            scoring.telegram_reliability_weight,
+            scoring.telegram_latency_weight,
+            scoring.telegram_stability_weight,
+        )
+        total = sum(weights)
+        if total <= 0:
+            weights, total = (0.6, 0.3, 0.1), 1.0
+        components = (
+            result.reliability_lower_bound,
+            _latency_score(latency, result.quality_policy.max_p95_ms),
+            result.stability,
+        )
+        return max(0.0, min(1.0, sum(weight * value for weight, value in zip(weights, components)) / total))
     latency = result.avg_latency_ms
     if result.successes == 0 or latency is None or not math.isfinite(latency) or latency < 0:
         return 0.0
@@ -48,7 +66,7 @@ def rank(results: List[ProxyResult]) -> List[ProxyResult]:
         results,
         key=lambda r: (
             -r.score,
-            r.avg_latency_ms if r.avg_latency_ms is not None else math.inf,
+            r.ranking_latency_ms if r.ranking_latency_ms is not None else math.inf,
             r.proxy.key(),
         ),
     )

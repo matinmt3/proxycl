@@ -9,6 +9,7 @@ import pytest
 
 import main
 from config.loader import AppConfig
+from tests.proxy_fixtures import qualified_result
 from utils.models import FailureReason, Proxy, ProxyResult, TestSample
 
 
@@ -26,7 +27,7 @@ def cli_config(config, monkeypatch):
     return config
 
 
-@pytest.mark.parametrize("flag, expected", [("--help", "--no-browser"), ("--version", "REVMAMAD 3.1.0")])
+@pytest.mark.parametrize("flag, expected", [("--help", "--no-browser"), ("--version", "REVMAMAD 3.2.0")])
 def test_help_and_version_work_without_any_installed_packages(tmp_path, flag, expected):
     result = subprocess.run(
         [sys.executable, "-S", str(main.PROJECT_ROOT / "main.py"), flag],
@@ -67,7 +68,7 @@ def test_menu_exercises_every_action_and_returns_after_dashboard(cli_config, mon
         ("collect", {"mode": "web"}),
     ]
     output = capsys.readouterr().out
-    assert "REVMAMAD v3.1.0" in output and "Invalid choice" in output and "Bye!" in output
+    assert "REVMAMAD v3.2.0" in output and "Invalid choice" in output and "Bye!" in output
 
 
 def test_menu_survives_action_failure_and_interrupt(cli_config, monkeypatch, capsys):
@@ -141,11 +142,13 @@ def test_banner_fits_32_column_termux(monkeypatch, capsys):
     lines = capsys.readouterr().out.splitlines()
     assert max(map(len, lines)) <= 32
     assert any("#" in line for line in lines)
-    assert "REVMAMAD v3.1.0" in lines
+    assert "REVMAMAD v3.2.0" in lines
 
 
 def make_result(server, *, success, failure=FailureReason.NONE, latency=100):
     proxy = Proxy(server, 443, "11223344556677889900aabbccddeeff")
+    if success:
+        return qualified_result(proxy, latency)
     return ProxyResult(
         proxy,
         samples=[TestSample(success, total_latency_ms=latency if success else None, failure_reason=failure)],
@@ -252,7 +255,7 @@ def test_top_limits_saved_output(config, capsys):
     path.write_text(
         json.dumps(
             [
-                {"server": f"proxy{i}.example", "port": 443, "score": 0.9, "avg_latency_ms": 30}
+                dict(qualified_result(Proxy(f"proxy{i}.example", 443, "04" * 16), 30).to_dict(), score=0.9)
                 for i in range(3)
             ]
         ),

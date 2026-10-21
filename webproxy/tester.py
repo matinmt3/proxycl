@@ -10,6 +10,7 @@ import socket
 import ssl
 import struct
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
@@ -295,7 +296,7 @@ class WebTester:
             await asyncio.gather(*tasks, return_exceptions=True)
             bar.close()
             self.partial_results = [
-                ProxyResult(result.proxy, list(result.samples), result.score)
+                replace(result, samples=list(result.samples))
                 for result in results
                 if result is not None and result.samples
             ]

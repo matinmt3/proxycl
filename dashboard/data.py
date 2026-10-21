@@ -15,8 +15,9 @@ DEFAULT_OUTPUT_FOLDER = Path(__file__).resolve().parents[1] / "output"
 DEFAULT_DATA_FILE = DEFAULT_OUTPUT_FOLDER / "proxy.json"  # v2 compatibility
 MODES = ("mtproto", "telegram", "web")
 PROTOCOLS = ("http", "https", "socks4", "socks5")
-SORT_FIELDS = ("score", "avg_latency_ms", "success_rate", "stability")
+SORT_FIELDS = ("score", "avg_latency_ms", "success_rate", "stability", "telegram_p95_ms")
 COUNT_FIELDS = ("collected", "selected", "tested", "verified", "eligible", "displayed")
+SESSION_METRICS = ("telegram_median_ms", "telegram_p95_ms", "telegram_jitter_ms", "reliability_lower_bound")
 
 
 def number(value):
@@ -29,6 +30,69 @@ def validate_mode(mode: str) -> str:
     if mode not in MODES:
         raise ValueError("mode must be mtproto, telegram, or web")
     return mode
+
+
+def _strict_qualified(row: dict) -> bool:
+    """Check saved proof metadata against its policy; a profile label alone is insufficient."""
+    policy = row.get("strict_policy")
+    if (
+        row.get("verification_profile") != "telegram_session"
+        or row.get("strict_eligible") is not True
+        or not isinstance(policy, dict)
+    ):
+        return False
+    required = policy.get("required_dc_ids")
+    verified = row.get("dc_ids_verified")
+    for values in (required, verified):
+        if (
+            not isinstance(values, list)
+            or any(type(value) is not int or not 1 <= value <= 5 for value in values)
+            or len(values) != len(set(values))
+        ):
+            return False
+    if len(set(required)) < 2 or not set(required).issubset(verified):
+        return False
+    minimum = policy.get("min_successes")
+    pings = policy.get("min_ping_count")
+    rate = number(policy.get("min_success_rate"))
+    if (
+        type(minimum) is not int
+        or minimum < 3
+        or type(pings) is not int
+        or pings < 3
+        or rate is None
+        or not 0.8 <= rate <= 1
+    ):
+        return False
+    attempts, successes, strict_successes = (
+        row.get(key) for key in ("attempts", "successes", "strict_successes")
+    )
+    if (
+        any(type(value) is not int for value in (attempts, successes, strict_successes))
+        or not minimum <= strict_successes <= successes <= attempts
+    ):
+        return False
+    observed = strict_successes / attempts
+    reported_rate = number(row.get("success_rate"))
+    if reported_rate is None or abs(reported_rate - successes / attempts) > 0.0001:
+        return False
+    count = row.get("ping_count")
+    if observed < rate or type(count) is not int or count < strict_successes * pings:
+        return False
+    metrics = [number(row.get(key)) for key in SESSION_METRICS]
+    if any(value is None or value < 0 for value in metrics):
+        return False
+    median, p95, jitter, lower_bound = metrics
+    max_p95, max_jitter = (number(policy.get(key)) for key in ("max_p95_ms", "max_jitter_ms"))
+    if max_p95 is None or max_p95 <= 0 or max_jitter is None or max_jitter <= 0:
+        return False
+    z2 = 1.96**2
+    wilson = (
+        observed
+        + z2 / (2 * attempts)
+        - 1.96 * math.sqrt((observed * (1 - observed) + z2 / (4 * attempts)) / attempts)
+    ) / (1 + z2 / attempts)
+    return median <= p95 <= max_p95 and jitter <= max_jitter and abs(lower_bound - wilson) <= 0.0001
 
 
 def _endpoint_key(row: dict, mode: str) -> str:
@@ -96,7 +160,7 @@ def _safe_action(row: dict, mode: str, *, require_secret: bool = False) -> str |
         return None
 
 
-def _rows(rows: list, mode: str) -> list[dict]:
+def _rows(rows: list, mode: str, profile: str = "transport") -> list[dict]:
     result = []
     for index, row in enumerate(rows, 1):
         if not isinstance(row, dict) or not isinstance(row.get("server"), str) or not row["server"]:
@@ -107,19 +171,32 @@ def _rows(rows: list, mode: str) -> list[dict]:
             continue
         item = dict(row)
         item["rank"] = index
-        for field in (*SORT_FIELDS, "timeout_rate", "median_latency_ms", "jitter_ms"):
+        for field in (*SORT_FIELDS, "timeout_rate", "median_latency_ms", "jitter_ms", *SESSION_METRICS):
             item[field] = number(row.get(field))
         item["source"] = str(row.get("source") or "unknown")
         if mode != "web":
+            qualified = profile == "telegram_session" and _strict_qualified(row)
+            item["verification_profile"] = "telegram_session" if qualified else "transport"
+            item["strict_eligible"] = qualified
             item.pop("uri", None)
             item.pop("protocol", None)
-            item["tg_link"] = _safe_action(row, "mtproto", require_secret=mode == "telegram")
+            item["tg_link"] = (
+                _safe_action(row, "mtproto", require_secret=mode == "telegram") if qualified else None
+            )
             if mode == "telegram" or "web_link" in item:
-                item["web_link"] = _safe_action(row, "telegram")
+                item["web_link"] = _safe_action(row, "telegram") if qualified else None
         else:
             item.pop("tg_link", None)
             item.pop("web_link", None)
             item.pop("secret", None)
+            for key in list(item):
+                if key.startswith(("strict_", "telegram_")) or key in {
+                    "dc_ids_verified",
+                    "ping_count",
+                    "reliability_lower_bound",
+                }:
+                    item.pop(key)
+            item["verification_profile"] = "web"
             item["uri"] = _safe_action(row, mode)
         result.append(item)
     return result
@@ -238,7 +315,7 @@ def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
                 "version": 1,
                 "mode": mode,
                 "state": "legacy",
-                "message": "Legacy MTProto results; scan time and candidate counts are unknown.",
+                "message": "Legacy transport probe evidence only. Re-scan for strict verification; scan time and candidate counts are unknown.",
                 "summary": {
                     "started_at": None,
                     "completed_at": None,
@@ -250,6 +327,8 @@ def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
                     "eligible": len(rows),
                     "displayed": min(10, len(rows)),
                     "failure_counts": {},
+                    "verification_profile": "transport",
+                    "strict_verified": 0,
                 },
                 "source_reports": [],
                 "rows": rows,
@@ -271,6 +350,20 @@ def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
         json.dumps(raw, allow_nan=False)
         _validate_summary(raw["summary"])
         _validate_health(raw["rows"])
+        profile = raw["summary"].get("verification_profile", "web" if mode == "web" else "transport")
+        if profile not in (("web",) if mode == "web" else ("telegram_session", "transport")):
+            raise ValueError("Invalid verification profile")
+        if profile == "telegram_session":
+            strict_count, reachable = (
+                raw["summary"].get(key) for key in ("strict_verified", "transport_reachable")
+            )
+            if (
+                any(type(value) is not int for value in (strict_count, reachable))
+                or not len(raw["rows"]) <= strict_count <= reachable <= raw["summary"]["tested"]
+                or raw["summary"]["verified"] != strict_count
+                or not all(_strict_qualified(row) for row in raw["rows"])
+            ):
+                raise ValueError("Invalid strict verification evidence")
         reports = []
         for report in raw["source_reports"]:
             if (
@@ -285,12 +378,16 @@ def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
             if isinstance(report.get("error"), str):
                 safe["error"] = report["error"][:200]
             reports.append(safe)
-        rows = _rows(raw["rows"], mode)
+        rows = _rows(raw["rows"], mode, profile)
         if len(rows) != len(raw["rows"]):
             raise ValueError("Invalid snapshot row")
         if raw["summary"]["eligible"] != len(rows) or raw["summary"]["displayed"] != min(10, len(rows)):
             raise ValueError("Snapshot counts do not match its eligible rows")
         summary = dict(raw["summary"])
+        summary["verification_profile"] = profile
+        if profile == "transport":
+            summary["strict_verified"] = 0
+            summary.setdefault("transport_reachable", summary["verified"])
         summary.setdefault("interrupted", False)
         summary.setdefault("skipped", summary["selected"] - summary["tested"])
         return {
@@ -298,7 +395,14 @@ def snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
             "mode": mode,
             "state": "ready",
             "message": (
-                "Stopped scan / partial results." if summary["interrupted"] else "Completed scan snapshot."
+                ("Stopped scan / partial results. " if summary["interrupted"] else "")
+                + "Transport probe evidence only. Re-scan for strict Telegram verification."
+                if profile == "transport"
+                else (
+                    "Stopped scan / partial results."
+                    if summary["interrupted"]
+                    else "Completed scan snapshot."
+                )
             ),
             "summary": summary,
             "source_reports": reports,
@@ -329,6 +433,8 @@ def filter_rows(
         or protocol not in ("all", *PROTOCOLS)
         or mode != "web"
         and protocol != "all"
+        or mode == "web"
+        and sort_by == "telegram_p95_ms"
     ):
         raise ValueError("Invalid sort_by, order, limit, or protocol")
     if search:

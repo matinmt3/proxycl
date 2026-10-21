@@ -7,6 +7,7 @@ from urllib.request import urlopen
 import pytest
 
 from dashboard import data, server
+from tests.test_dashboard_strict import strict_row
 from tests.test_dashboard_v3 import write_snapshot
 
 SECRET = "00112233445566778899aabbccddeeff"
@@ -15,6 +16,7 @@ SECRET = "00112233445566778899aabbccddeeff"
 def telegram_row():
     query = urlencode({"server": "telegram-share.example", "port": 443, "secret": SECRET})
     return {
+        **strict_row(),
         "server": "telegram-share.example",
         "port": 443,
         "secret": SECRET,

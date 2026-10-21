@@ -8,6 +8,7 @@ import pytest
 
 from collector.sources import parse_text_blob
 from config.loader import AppConfig
+from tests.proxy_fixtures import qualified_result
 from utils.models import FailureReason, Proxy, ProxyResult, TestSample
 
 USER_LINK = "https://t.me/proxy?server=135.181.74.178&port=443&secret=3XnnAQIAAQAH8AMDhuJMOt0"
@@ -58,7 +59,7 @@ def test_telegram_scan_uses_mtproto_probe_and_exports_https_links(config, monkey
         ParallelTester,
         "run",
         lambda self, selected: [
-            ProxyResult(selected[0], [TestSample(True, total_latency_ms=100)]),
+            qualified_result(selected[0], 100),
             ProxyResult(selected[1], [TestSample(False, failure_reason=FailureReason.TCP_TIMEOUT)]),
         ],
     )
@@ -109,7 +110,8 @@ def test_saved_telegram_top_displays_a_valid_https_share_link(config, capsys):
     import main
 
     proxy = parse_text_blob(USER_LINK, "user-example")[0]
-    result = ProxyResult(proxy, [TestSample(True, total_latency_ms=100)], score=0.8)
+    result = qualified_result(proxy, 100)
+    result.score = 0.8
     folder = Path(config.output.folder) / "telegram"
     folder.mkdir(parents=True)
     (folder / "proxy.json").write_text(json.dumps([result.to_dict()]))

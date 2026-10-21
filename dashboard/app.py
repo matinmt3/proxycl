@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from dashboard import data
 
-app = FastAPI(title="REVMAMAD — Proxy Radar", version="3.1.0")
+app = FastAPI(title="REVMAMAD — Proxy Radar", version="3.2.0")
 OUTPUT_FOLDER = Path(os.environ.get("REVMAMAD_OUTPUT_FOLDER", data.DEFAULT_OUTPUT_FOLDER))
 DATA_FILE = data.DEFAULT_DATA_FILE  # compatibility for v2 integrations
 ASSETS = Path(__file__).resolve().parent

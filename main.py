@@ -16,7 +16,7 @@ from pathlib import Path
 from config.loader import AppConfig
 from utils.logger import setup_logger
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
@@ -98,6 +98,14 @@ def run_pipeline(config: AppConfig, export: bool = True, *, mode: str = "mtproto
     _message(
         f"Tested: {outcome.summary['tested']} | Verified: {outcome.summary['verified']} | Eligible: {outcome.summary['eligible']}"
     )
+    if mode != "web":
+        _message(
+            f"Candidates with passing probes: {outcome.summary['transport_reachable']} | "
+            f"Qualified Telegram sessions: {outcome.summary['strict_verified']}"
+        )
+        _message("Strict results need repeated authenticated sessions across the configured Telegram DCs.")
+        if export:
+            _message(f"All completed observations: {outcome.folder / 'observations.json'}")
     failures = outcome.summary["failure_counts"]
     if failures:
         _message("Failed attempts: " + ", ".join(f"{name}={count}" for name, count in failures.items()))
@@ -119,7 +127,11 @@ def print_summary(results, n: int = 10):
 
 def print_best10(results, output_folder: str, *, saved: bool = True, mode: str = "mtproto"):
     """Show up to ten verified proxies; a real scan may return fewer than ten."""
-    healthy = [r for r in results if r.success_rate > 0 and r.avg_latency_ms is not None]
+    healthy = [
+        r
+        for r in results
+        if r.success_rate > 0 and r.avg_latency_ms is not None and (mode == "web" or r.strict_eligible)
+    ]
     from benchmark.scorer import rank
 
     top = rank(healthy)[:10]
@@ -135,8 +147,19 @@ def print_best10(results, output_folder: str, *, saved: bool = True, mode: str =
         print(
             f"\n#{i} {getattr(result.proxy, 'protocol', 'MTProto')} {result.proxy.server}:{result.proxy.port}"
         )
+        if mode == "web":
+            _message(f"Probe latency: {result.avg_latency_ms:.0f} ms")
+        else:
+            _message(
+                f"Telegram RTT p95: {result.telegram_p95_ms:.0f} ms | "
+                f"Median: {result.telegram_median_ms:.0f} ms | Jitter: {result.telegram_jitter_ms:.0f} ms"
+            )
+            _message(
+                f"Authenticated reconnects: {result.strict_successes}/{result.attempts} | "
+                f"Matched pongs: {result.ping_count} | DCs: {result.dc_ids_verified}"
+            )
         _message(
-            f"Speed: {result.avg_latency_ms:.0f} ms | Success: {result.success_rate:.0%} | Score: {result.score:.1%} | Samples: {result.attempts}"
+            f"Pass rate: {result.success_rate:.0%} | Score: {result.score:.1%} | Samples: {result.attempts}"
         )
         if mode == "telegram":
             print(result.proxy.web_link())
@@ -225,7 +248,8 @@ def cmd_top(config: AppConfig, n: int, *, mode: str = "mtproto"):
     if not data:
         print("The last export contains no verified proxies.")
         return
-    for index, proxy in enumerate(data[:n], 1):
+    qualified = []
+    for index, proxy in enumerate(data, 1):
         if not isinstance(proxy, dict) or not isinstance(proxy.get("server"), str):
             raise ValueError(f"Invalid proxy entry {index} in {path}; regenerate the export.")
         score = proxy.get("score")
@@ -234,8 +258,24 @@ def cmd_top(config: AppConfig, n: int, *, mode: str = "mtproto"):
             raise ValueError(f"Invalid score in export entry {index}; regenerate the export.")
         if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
             raise ValueError(f"Invalid port in export entry {index}; regenerate the export.")
-        latency = proxy.get("avg_latency_ms")
-        print(f"{index:>3}. {proxy['server']}:{port} score={score:.3f} latency={latency} ms")
+        if mode != "web":
+            # Use the same structural proof validation as the dashboard so an
+            # old saved transport probe cannot become a strict recommendation.
+            from dashboard.data import _strict_qualified
+
+            if not _strict_qualified(proxy):
+                continue
+        qualified.append(proxy)
+    if len(qualified) != len(data):
+        _message(
+            f"Skipped {len(data) - len(qualified)} saved entries without strict Telegram evidence. "
+            f"Run: python main.py best10 --mode {mode} --count ALL"
+        )
+    for index, proxy in enumerate(qualified[:n], 1):
+        port, score = proxy["port"], proxy["score"]
+        latency = proxy.get("telegram_p95_ms") if mode != "web" else proxy.get("avg_latency_ms")
+        metric = "Telegram RTT p95" if mode != "web" else "probe latency"
+        print(f"{index:>3}. {proxy['server']}:{port} score={score:.3f} {metric}={latency} ms")
         if mode == "telegram":
             from tester.secrets import decode_secret, normalize_server
             from utils.models import Proxy

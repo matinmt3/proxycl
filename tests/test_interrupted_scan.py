@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from config.loader import AppConfig
+from tests.proxy_fixtures import qualified_result
 from utils.interruption import ScanInterrupted
 from utils.models import FailureReason, Proxy, ProxyResult, TestSample
 from webproxy.models import WebProxy
@@ -40,18 +41,31 @@ def test_interrupted_scan_exports_only_real_samples_and_preserves_completed_gene
         tester,
         "run",
         lambda self, selected: [
-            ProxyResult(p, [TestSample(True, total_latency_ms=100)] * 3) for p in selected
+            (
+                ProxyResult(p, [TestSample(True, total_latency_ms=100)] * 3)
+                if mode == "web"
+                else qualified_result(p, 100)
+            )
+            for p in selected
         ],
     )
     complete = run_scan(config, mode, 2)
     previous = (complete.folder / "snapshot.json").read_bytes()
 
     partial = [
-        ProxyResult(p, [TestSample(True, total_latency_ms=200 - i * 10)] * 3)
+        (
+            ProxyResult(p, [TestSample(True, total_latency_ms=200 - i * 10)] * 3)
+            if mode == "web"
+            else qualified_result(p, 200 - i * 10)
+        )
         for i, p in enumerate(proxies[:14])
     ]
     partial[0].samples = [TestSample(False, failure_reason=FailureReason.TCP_TIMEOUT)] * 3
-    partial.append(ProxyResult(proxies[14], [TestSample(True, total_latency_ms=50)]))
+    partial.append(
+        ProxyResult(proxies[14], [TestSample(True, total_latency_ms=50)])
+        if mode == "web"
+        else qualified_result(proxies[14], 50, attempts=1)
+    )
 
     def stop(self, selected):
         raise ScanInterrupted(partial)
@@ -62,13 +76,18 @@ def test_interrupted_scan_exports_only_real_samples_and_preserves_completed_gene
     assert outcome.summary["selected"] == 30 and outcome.summary["tested"] == 15
     assert outcome.summary["fully_tested"] == 14 and outcome.summary["partial_tested"] == 1
     assert outcome.summary["retry_count"] == 3 and outcome.summary["skipped"] == 15
-    assert outcome.summary["verified"] == 14 and outcome.summary["displayed"] == 10
+    assert outcome.summary["verified"] == (14 if mode == "web" else 13) and outcome.summary["displayed"] == 10
     assert "Stopped scan / partial results" in (outcome.folder / "best10_links.txt").read_text()
     assert (outcome.folder / "completed_snapshot.json").read_bytes() == previous
     snap = json.loads((outcome.folder / "snapshot.json").read_text())
     assert snap["summary"] == outcome.summary
     assert snap["rows"][:10] == json.loads((outcome.folder / "top10.json").read_text())
-    assert {r["server"] for r in snap["rows"]} == {p.server for p in proxies[1:15]}
+    assert {r["server"] for r in snap["rows"]} == {
+        p.server for p in proxies[1 : (15 if mode == "web" else 14)]
+    }
+    observations = json.loads((outcome.folder / "observations.json").read_text())
+    assert len(observations["rows"]) == 15
+    assert sorted(len(row["samples"]) for row in observations["rows"]) == [1] + [3] * 14
     assert not (Path(config.output.folder) / ("mtproto" if mode != "mtproto" else "telegram")).exists()
 
 

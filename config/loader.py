@@ -32,6 +32,13 @@ class TestingConfig:
     timeout_seconds: float = 5.0
     retries: int = 3
     connect_timeout_seconds: float = 3.0
+    mtproto_profile: str = "telegram_session"
+    mtproto_workers: int = 16
+    auth_timeout_seconds: float = 12.0
+    ping_timeout_seconds: float = 3.0
+    ping_count: int = 3
+    ping_interval_seconds: float = 0.5
+    telegram_dc_ids: List[int] = field(default_factory=lambda: [2, 4])
 
 
 @dataclass
@@ -41,6 +48,9 @@ class ScoringConfig:
     stability_weight: float = 0.20
     timeout_weight: float = 0.10
     max_latency_ms: float = 2000.0
+    telegram_reliability_weight: float = 0.60
+    telegram_latency_weight: float = 0.30
+    telegram_stability_weight: float = 0.10
 
     def normalized(self) -> "ScoringConfig":
         total = self.latency_weight + self.success_rate_weight + self.stability_weight + self.timeout_weight
@@ -52,6 +62,9 @@ class ScoringConfig:
             stability_weight=self.stability_weight / total,
             timeout_weight=self.timeout_weight / total,
             max_latency_ms=self.max_latency_ms,
+            telegram_reliability_weight=self.telegram_reliability_weight,
+            telegram_latency_weight=self.telegram_latency_weight,
+            telegram_stability_weight=self.telegram_stability_weight,
         )
 
 
@@ -61,6 +74,10 @@ class OutputConfig:
     min_score: float = 0.0
     max_latency_ms: float = 5000.0
     top_sizes: List[int] = field(default_factory=lambda: [10, 50, 100])
+    mtproto_min_successes: int = 3
+    mtproto_min_success_rate: float = 0.8
+    mtproto_max_ping_p95_ms: float = 1500.0
+    mtproto_max_ping_jitter_ms: float = 500.0
 
 
 @dataclass
@@ -223,10 +240,31 @@ class AppConfig:
         dashboard = _section(raw, "dashboard", DashboardConfig)
         logging_cfg = _section(raw, "logging", LoggingConfig)
 
-        for name in ("workers", "retries"):
+        for name in ("workers", "retries", "mtproto_workers", "ping_count"):
             _number(getattr(testing, name), f"testing.{name}", positive=True, integer=True)
-        for name in ("timeout_seconds", "connect_timeout_seconds"):
+        for name in (
+            "timeout_seconds",
+            "connect_timeout_seconds",
+            "auth_timeout_seconds",
+            "ping_timeout_seconds",
+        ):
             _number(getattr(testing, name), f"testing.{name}", positive=True)
+        if testing.mtproto_profile not in ("telegram_session", "transport"):
+            raise ValueError("testing.mtproto_profile must be telegram_session or transport")
+        if not 3 <= testing.ping_count <= 10:
+            raise ValueError("testing.ping_count must be between 3 and 10")
+        if not 0 <= _number(testing.ping_interval_seconds, "testing.ping_interval_seconds") <= 5:
+            raise ValueError("testing.ping_interval_seconds must be between 0 and 5")
+        for name, maximum in (("auth_timeout_seconds", 120), ("ping_timeout_seconds", 60)):
+            if getattr(testing, name) > maximum:
+                raise ValueError(f"testing.{name} must be at most {maximum}")
+        if (
+            not isinstance(testing.telegram_dc_ids, list)
+            or len(testing.telegram_dc_ids) < 2
+            or any(type(dc) is not int or not 1 <= dc <= 5 for dc in testing.telegram_dc_ids)
+            or len(set(testing.telegram_dc_ids)) != len(testing.telegram_dc_ids)
+        ):
+            raise ValueError("testing.telegram_dc_ids must contain at least two distinct DC IDs from 1 to 5")
         for name in ("latency_weight", "success_rate_weight", "stability_weight", "timeout_weight"):
             if _number(getattr(scoring, name), f"scoring.{name}") < 0:
                 raise ValueError(f"scoring.{name} cannot be negative")
@@ -239,7 +277,24 @@ class AppConfig:
         ):
             raise ValueError("At least one scoring weight must be greater than zero")
         _number(scoring.max_latency_ms, "scoring.max_latency_ms", positive=True)
+        strict_weights = (
+            "telegram_reliability_weight",
+            "telegram_latency_weight",
+            "telegram_stability_weight",
+        )
+        for name in strict_weights:
+            if _number(getattr(scoring, name), f"scoring.{name}") < 0:
+                raise ValueError(f"scoring.{name} cannot be negative")
+        if sum(getattr(scoring, name) for name in strict_weights) <= 0:
+            raise ValueError("At least one Telegram scoring weight must be greater than zero")
         _number(output.max_latency_ms, "output.max_latency_ms", positive=True)
+        _number(output.mtproto_min_successes, "output.mtproto_min_successes", positive=True, integer=True)
+        if output.mtproto_min_successes < 3:
+            raise ValueError("output.mtproto_min_successes must be at least 3")
+        if not 0.8 <= _number(output.mtproto_min_success_rate, "output.mtproto_min_success_rate") <= 1:
+            raise ValueError("output.mtproto_min_success_rate must be between 0.8 and 1")
+        for name in ("mtproto_max_ping_p95_ms", "mtproto_max_ping_jitter_ms"):
+            _number(getattr(output, name), f"output.{name}", positive=True)
         if not 0 <= _number(output.min_score, "output.min_score") <= 1:
             raise ValueError("output.min_score must be between 0 and 1")
         if not isinstance(output.top_sizes, list):

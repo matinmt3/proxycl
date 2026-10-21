@@ -1,8 +1,10 @@
-"""Validate MTProxy transport by requiring a nonce-matched MTProto resPQ.
+"""Probe MTProxy transports and verify authenticated Telegram sessions.
 
 Supports raw, dd padded, and ee FakeTLS secrets. This unauthenticated probe
 checks the proxy's ability to answer MTProto; it does not log in, create an
-authorization key, or authenticate the Telegram server's RSA identity.
+authorization key, or authenticate the Telegram server's RSA identity. The
+default strict runner uses test_proxy_strict instead: pinned server identity,
+an in-memory key and repeated encrypted Telegram ping/pong exchanges.
 Protocol references: core.telegram.org/mtproto/mtproto-transports and TDLib's
 mtproto_api.tl, ProxySecret.cpp, TlsInit.cpp, and TcpTransport.cpp.
 """
@@ -11,6 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
+import math
 import os
 import socket
 import struct
@@ -29,6 +33,7 @@ REQ_PQ_MULTI = 0xBE7E8EF1
 RES_PQ = 0x05162463
 VECTOR = 0x1CB5C415
 MAX_PROBE_RESPONSE = 4096
+logger = logging.getLogger("mtselector.protocol")
 _FORBIDDEN_FIRST_WORDS = {b"HEAD", b"POST", b"GET ", b"OPTI", b"\x16\x03\x01\x02", PADDED_TAG, b"\xee" * 4}
 
 
@@ -167,6 +172,168 @@ async def _exchange_probe(reader, writer, secret: ProxySecret) -> None:
     packet = await _read_frame(_EncryptedReader(reader, decryptor, bool(secret.domain)), secret.padded)
     if not validate_res_pq(packet, nonce, secret.padded):
         raise ValueError("Proxy did not return a valid nonce-matched MTProto resPQ")
+
+
+class _SessionTransport:
+    """Retain both AES streams across the entire auth/session exchange."""
+
+    def __init__(self, reader, writer, secret: ProxySecret, dc_id: int):
+        self.writer, self.secret = writer, secret
+        self.header, self.encryptor, decryptor, _, _ = _build_transport(secret, dc_id)
+        self.reader = _EncryptedReader(reader, decryptor, bool(secret.domain))
+        self.first = True
+
+    async def send(self, packet: bytes) -> None:
+        if not packet or len(packet) % 4 or len(packet) > MAX_PROBE_RESPONSE:
+            raise ValueError("Invalid MTProto session packet size")
+        if self.secret.padded:
+            padded = packet + os.urandom(os.urandom(1)[0] % 16)
+            framed = struct.pack("<I", len(padded)) + padded
+        else:
+            words = len(packet) // 4
+            framed = (bytes([words]) if words < 127 else b"\x7f" + words.to_bytes(3, "little")) + packet
+        encrypted = (self.header if self.first else b"") + self.encryptor.encrypt(framed)
+        self.writer.write(wrap_tls_payload(encrypted, first=self.first) if self.secret.domain else encrypted)
+        self.first = False
+        await self.writer.drain()
+
+    async def receive(self) -> bytes:
+        packet = await _read_frame(self.reader, self.secret.padded)
+        # The outer padded transport is independent of MTProto's inner padding.
+        if packet[:8] == bytes(8):
+            size = int.from_bytes(packet[16:20], "little")
+            length = 20 + size
+            # TDLib's clear-message reader/handshake tolerates auth padding
+            # beyond the transport's ordinary 0..15 bytes. Real MTProxies
+            # append it too. Bound it defensively, then authenticate the actual
+            # declared object through the pinned RSA/DH/session exchange.
+            if size < 4 or size % 4 or not 0 <= len(packet) - length <= 1024:
+                raise ValueError("Invalid unencrypted session envelope")
+            return packet[:length]
+        if len(packet) < 72:
+            raise ValueError("Encrypted session packet is too short")
+        padding = (len(packet) - 24) % 16
+        if padding and not self.secret.padded:
+            raise ValueError("Invalid encrypted session envelope")
+        return packet[:-padding] if padding else packet
+
+
+async def test_proxy_strict(
+    proxy: Proxy,
+    connect_timeout: float = 3.0,
+    handshake_timeout: float = 12.0,
+    *,
+    dc_id: int = 2,
+    ping_count: int = 3,
+    ping_interval: float = 0.5,
+    ping_timeout: float = 3.0,
+) -> TestSample:
+    """Require a real authenticated MTProto2 session through this exact proxy.
+
+    No account login or application API credentials are used. Key material is
+    kept only in memory; the session verifier attempts bounded server cleanup.
+    A cancelled attempt stays cancelled and is never recorded as a failure.
+    """
+    from tester.telegram_session import verify_session
+
+    if isinstance(dc_id, bool) or not isinstance(dc_id, int) or dc_id not in range(1, 6):
+        raise ValueError("Telegram DC must be an integer between 1 and 5")
+    if isinstance(ping_count, bool) or not isinstance(ping_count, int) or not 2 <= ping_count <= 10:
+        raise ValueError("Strict ping_count must be between 2 and 10")
+    for name, value, allow_zero in (
+        ("connect_timeout", connect_timeout, False),
+        ("handshake_timeout", handshake_timeout, False),
+        ("ping_timeout", ping_timeout, False),
+        ("ping_interval", ping_interval, True),
+    ):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"{name} must be finite")
+        if value < 0 or (value == 0 and not allow_zero):
+            raise ValueError(f"{name} must be positive")
+    start = time.perf_counter()
+    writer, tcp_latency_ms = None, None
+
+    def failed(reason):
+        return TestSample(
+            success=False,
+            failure_reason=reason,
+            tcp_latency_ms=tcp_latency_ms,
+            total_latency_ms=(time.perf_counter() - start) * 1000,
+            verification_level="telegram_session",
+            dc_id=dc_id,
+        )
+
+    try:
+        secret = decode_secret(proxy.secret)
+    except ValueError:
+        return failed(FailureReason.SECRET_INVALID)
+    try:
+        server, port = normalize_server(proxy.server), normalize_port(proxy.port)
+    except ValueError:
+        return failed(FailureReason.DNS_ERROR)
+    try:
+        connection_started = time.perf_counter()
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(server, port), connect_timeout)
+        tcp_latency_ms = (time.perf_counter() - connection_started) * 1000
+    except socket.gaierror:
+        return failed(FailureReason.DNS_ERROR)
+    except TimeoutError:
+        return failed(FailureReason.TCP_TIMEOUT)
+    except OSError:
+        return failed(FailureReason.TCP_REFUSED)
+    try:
+        if secret.domain:
+            async with asyncio.timeout(handshake_timeout):
+                hello = build_client_hello(secret)
+                writer.write(hello)
+                await writer.drain()
+                await authenticate_server_hello(reader, secret, hello)
+        transport = _SessionTransport(reader, writer, secret, dc_id)
+        verification = await verify_session(
+            transport.send,
+            transport.receive,
+            dc_id,
+            ping_count=ping_count,
+            ping_interval=ping_interval,
+            auth_timeout=handshake_timeout,
+            ping_timeout=ping_timeout,
+        )
+        rtts = verification.ping_rtts_ms
+        if (
+            not verification.authenticated
+            or len(rtts) != ping_count
+            or any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+                for value in rtts
+            )
+        ):
+            raise ValueError("Incomplete authenticated Telegram ping evidence")
+        return TestSample(
+            success=True,
+            tcp_latency_ms=tcp_latency_ms,
+            handshake_latency_ms=verification.handshake_ms,
+            total_latency_ms=(time.perf_counter() - start) * 1000,
+            verification_level="telegram_session",
+            dc_id=dc_id,
+            ping_rtts_ms=list(rtts),
+        )
+    except TimeoutError:
+        return failed(FailureReason.HANDSHAKE_TIMEOUT)
+    except (ValueError, asyncio.IncompleteReadError, OSError) as exc:
+        logger.debug("Strict Telegram verification rejected: %s", exc)
+        return failed(FailureReason.HANDSHAKE_INVALID)
+    except Exception:
+        return failed(FailureReason.UNKNOWN)
+    finally:
+        if writer is not None:
+            writer.close()
+            try:
+                await asyncio.wait_for(writer.wait_closed(), timeout=0.5)
+            except (OSError, TimeoutError):
+                pass
 
 
 async def test_proxy_once(

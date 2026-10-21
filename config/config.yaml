@@ -11,6 +11,13 @@ testing:
   timeout_seconds: 5.0     # per-attempt timeout
   retries: 3               # number of samples per proxy
   connect_timeout_seconds: 3.0
+  mtproto_profile: telegram_session  # transport is diagnostic only; it cannot qualify Telegram links
+  mtproto_workers: 16               # bounded separately from HTTP/SOCKS probes
+  auth_timeout_seconds: 12.0
+  ping_timeout_seconds: 3.0
+  ping_count: 3
+  ping_interval_seconds: 0.5
+  telegram_dc_ids: [2, 4]
 
 # Scoring weights (must sum to 1.0, values are checked/normalized at runtime)
 scoring:
@@ -19,6 +26,9 @@ scoring:
   stability_weight: 0.20
   timeout_weight: 0.10
   max_latency_ms: 2000     # latencies above this score 0 on the latency component
+  telegram_reliability_weight: 0.60
+  telegram_latency_weight: 0.30
+  telegram_stability_weight: 0.10
 
 # Output / export
 output:
@@ -26,6 +36,10 @@ output:
   min_score: 0.0
   max_latency_ms: 5000
   top_sizes: [10, 50, 100]
+  mtproto_min_successes: 3
+  mtproto_min_success_rate: 0.8
+  mtproto_max_ping_p95_ms: 1500
+  mtproto_max_ping_jitter_ms: 500
 
 # Refresh / scheduler
 scheduler:

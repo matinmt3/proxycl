@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter, deque
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -86,6 +86,7 @@ def run_scan(
         collector, tester, exporter_type = WebCollector(config), WebTester(config), WebExporter
     started = _now()
     interrupted = False
+    profile = "web" if mode == "web" else config.testing.mtproto_profile
     print(f"\n[{mode.upper()}] Collecting source feeds...", flush=True)
     candidates = select_candidates(collector.collect(), None)
     selected = select_candidates(candidates, limit)
@@ -94,12 +95,38 @@ def run_scan(
     if selected:
         from tester.runner import worker_count
 
-        workers = worker_count(config.testing.workers, len(selected))
-        estimated = (
-            math.ceil(len(selected) / workers)
-            * config.testing.retries
-            * (config.testing.timeout_seconds + config.testing.connect_timeout_seconds)
-        )
+        requested_workers = config.testing.workers
+        attempt_budget = config.testing.timeout_seconds + config.testing.connect_timeout_seconds
+        if profile == "telegram_session":
+            requested_workers = min(requested_workers, config.testing.mtproto_workers)
+            attempt_budget = (
+                config.testing.connect_timeout_seconds
+                + 2 * config.testing.auth_timeout_seconds
+                + config.testing.ping_count * config.testing.ping_timeout_seconds
+                + (config.testing.ping_count - 1) * config.testing.ping_interval_seconds
+                + 1  # bounded best-effort server-key cleanup
+            )
+            print(
+                "Strict Telegram session verification: pinned server identity, encrypted pongs, "
+                f"DCs {config.testing.telegram_dc_ids}, {config.testing.retries} reconnect attempts. "
+                "Probe duration includes setup and hold time; Telegram RTT measures the encrypted pongs.",
+                flush=True,
+            )
+            if config.testing.retries < max(
+                config.output.mtproto_min_successes, len(config.testing.telegram_dc_ids)
+            ):
+                print(
+                    "Configured retries cannot satisfy the strict sample/DC requirements. "
+                    "Increase testing.retries; this run can save observations but no qualified links.",
+                    flush=True,
+                )
+        elif mode != "web":
+            print(
+                "Transport diagnostics only. These probes do not qualify for strict top-ten links.",
+                flush=True,
+            )
+        workers = worker_count(requested_workers, len(selected))
+        estimated = math.ceil(len(selected) / workers) * config.testing.retries * attempt_budget
         print(
             f"Testing {len(selected)} candidates, {workers} workers. Approximate timeout budget: {estimated / 60:.1f} min. Ctrl+C stops and saves the best results so far.",
             flush=True,
@@ -117,6 +144,8 @@ def run_scan(
     # Filtering does not need to create an output directory in benchmark-only runs.
     eligible = eligible_results(results, output_cfg)
     failures = Counter(s.failure_reason.value for r in results for s in r.samples if not s.success)
+    reachable = sum(r.successes > 0 and r.avg_latency_ms is not None for r in results)
+    strict_verified = len(eligible) if mode != "web" else 0
     summary = {
         "run_id": str(uuid4()),
         "started_at": started,
@@ -124,13 +153,16 @@ def run_scan(
         "requested_count": limit,
         "interrupted": interrupted,
         "retry_count": config.testing.retries,
+        "verification_profile": profile,
+        "transport_reachable": reachable,
+        "strict_verified": strict_verified,
         "collected": len(candidates),
         "selected": len(selected),
         "tested": len(results),
         "fully_tested": sum(r.attempts >= config.testing.retries for r in results),
         "partial_tested": sum(0 < r.attempts < config.testing.retries for r in results),
         "skipped": len(selected) - len(results),
-        "verified": sum(r.successes > 0 and r.avg_latency_ms is not None for r in results),
+        "verified": strict_verified if mode != "web" else reachable,
         "eligible": len(eligible),
         "displayed": min(10, len(eligible)),
         "failure_counts": dict(sorted(failures.items())),
@@ -162,6 +194,17 @@ def run_scan(
                 f"Tested {len(results)} of {len(selected)}; skipped {summary['skipped']}.\n\n"
                 + readable.read_text(encoding="utf-8"),
             )
+        # Keep completed observations even when they do not satisfy strict
+        # eligibility. No session/auth keys are ever part of these models.
+        observations = {
+            "version": 1,
+            "mode": mode,
+            "summary": summary,
+            "rows": [dict(r.to_dict(), samples=[asdict(sample) for sample in r.samples]) for r in results],
+        }
+        exporter._write(
+            "observations.json", json.dumps(observations, ensure_ascii=False, indent=2, allow_nan=False)
+        )
         snapshot = {
             "version": 1,
             "mode": mode,

@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from config.loader import OutputConfig, TestingConfig
 from utils.models import FailureReason, Proxy, TestSample
 from webproxy.models import WebProxy
 
@@ -20,6 +21,8 @@ waiting = set()
 lock = threading.Lock()
 loop = None
 empty = len(sys.argv) > 2 and sys.argv[2] == "--empty"
+strict = sys.argv[1] != "web"
+retries = 3 if strict else 2
 
 
 class Handler(socketserver.StreamRequestHandler):
@@ -30,7 +33,7 @@ class Handler(socketserver.StreamRequestHandler):
         try:
             server, attempt = self.rfile.readline().decode().strip().split()
             if not empty and server == "completed.example":
-                self.wfile.write(b"FAIL\n" if attempt == "1" else b"OK\n")
+                self.wfile.write(b"FAIL\n" if not strict and attempt == "1" else b"OK\n")
                 self.wfile.flush()
             elif not empty and server == "partial.example" and attempt == "1":
                 self.wfile.write(b"OK\n")
@@ -73,6 +76,14 @@ async def network_probe(proxy, *args, **kwargs):
         await writer.drain()
         answer = await reader.readline()
         if answer == b"OK\n":
+            if strict:
+                return TestSample(
+                    True,
+                    total_latency_ms=1100,
+                    verification_level="telegram_session",
+                    dc_id=kwargs["dc_id"],
+                    ping_rtts_ms=[10, 10, 10],
+                )
             return TestSample(True, total_latency_ms=10)
         return TestSample(False, failure_reason=FailureReason.HANDSHAKE_INVALID)
     finally:
@@ -81,7 +92,8 @@ async def network_probe(proxy, *args, **kwargs):
 
 
 config = SimpleNamespace(
-    testing=SimpleNamespace(workers=2, retries=2, connect_timeout_seconds=30, timeout_seconds=30)
+    testing=TestingConfig(workers=2, retries=retries, connect_timeout_seconds=30, timeout_seconds=30),
+    output=OutputConfig(),
 )
 names = ["completed.example", "partial.example", "untested.example", "never-started.example"]
 if sys.argv[1] == "web":
@@ -90,10 +102,12 @@ if sys.argv[1] == "web":
     tester = module.WebTester(config)
     proxies = [WebProxy(name, 8080, "http") for name in names]
 else:
+    import tester.mtproto as protocol
     import tester.runner as module
 
     tester = module.ParallelTester(config)
     proxies = [Proxy(name, 443, "00112233445566778899aabbccddeeff") for name in names]
+    protocol.test_proxy_strict = network_probe
 module.test_proxy_once = network_probe
 pipeline = len(sys.argv) > 2 and not empty
 if pipeline:
@@ -101,7 +115,7 @@ if pipeline:
     root.mkdir(parents=True, exist_ok=True)
     config_path = root / "config.yaml"
     config_path.write_text(
-        "sources: []\nweb_sources: []\ntesting:\n  workers: 2\n  retries: 2\n"
+        f"sources: []\nweb_sources: []\ntesting:\n  workers: 2\n  retries: {retries}\n"
         "  timeout_seconds: 30\n  connect_timeout_seconds: 30\n"
         "output:\n  folder: results\n  top_sizes: []\n",
         encoding="utf-8",

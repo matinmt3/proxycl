@@ -92,6 +92,7 @@ code, .endpoint, .source-list li, .result-card { overflow-wrap: anywhere; }
 .measure span { display: block; color: var(--muted); font-size: .75rem; }
 .measure strong { display: block; font-size: 1rem; margin-top: 4px; }
 .result-source { color: var(--muted); font-size: .8rem; margin: 12px 0; }
+.measurement-note { color: var(--muted); font-size: .8rem; margin: 10px 0; overflow-wrap: anywhere; }
 .result-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .result-actions > * { flex: 1 1 110px; }
 .connection-details { margin-top: 12px; font-size: .8rem; color: var(--muted); }

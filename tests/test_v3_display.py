@@ -1,5 +1,6 @@
 import main
 from config.loader import AppConfig
+from tests.proxy_fixtures import qualified_result
 from utils.models import FailureReason, Proxy, ProxyResult, TestSample
 
 
@@ -14,10 +15,7 @@ def test_benchmark_shows_only_verified_top10_and_does_not_write(tmp_path, monkey
         Proxy("dead.example", 443, "00112233445566778899aabbccddeeff"),
         [TestSample(False, failure_reason=FailureReason.TCP_TIMEOUT)],
     )
-    good = ProxyResult(
-        Proxy("good.example", 443, "00112233445566778899aabbccddeeff"),
-        [TestSample(True, total_latency_ms=10)],
-    )
+    good = qualified_result(Proxy("good.example", 443, "00112233445566778899aabbccddeeff"), 10)
     monkeypatch.setattr(Collector, "collect", lambda self: [dead.proxy, good.proxy])
     monkeypatch.setattr(ParallelTester, "run", lambda self, proxies: [dead, good])
     main.cmd_benchmark(cfg)

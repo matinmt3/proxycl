@@ -77,6 +77,52 @@ class TestSample:
     total_latency_ms: Optional[float] = None
     failure_reason: FailureReason = FailureReason.NONE
     timestamp: float = field(default_factory=time.time)
+    verification_level: str = "transport"
+    dc_id: Optional[int] = None
+    ping_rtts_ms: list[float] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class TelegramQualityPolicy:
+    """Minimum proof for usable Telegram links; never inferred from a low score filter."""
+
+    min_successes: int = 3
+    min_success_rate: float = 0.8
+    required_dc_ids: tuple[int, ...] = (2, 4)
+    min_ping_count: int = 3
+    max_p95_ms: float = 1500.0
+    max_jitter_ms: float = 500.0
+
+    def __post_init__(self):
+        if type(self.min_successes) is not int or self.min_successes < 3:
+            raise ValueError("min_successes must be at least 3")
+        if type(self.min_ping_count) is not int or self.min_ping_count < 3:
+            raise ValueError("min_ping_count must be at least 3")
+        for name in ("min_success_rate", "max_p95_ms", "max_jitter_ms"):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"Invalid Telegram policy {name}")
+        if not 0.8 <= self.min_success_rate <= 1:
+            raise ValueError("min_success_rate must be between 0.8 and 1")
+        ids = self.required_dc_ids
+        if (
+            not isinstance(ids, (list, tuple))
+            or len(ids) < 2
+            or any(type(dc) is not int or not 1 <= dc <= 5 for dc in ids)
+            or len(set(ids)) != len(ids)
+        ):
+            raise ValueError("required_dc_ids must contain at least two distinct Telegram DC IDs")
+        object.__setattr__(self, "required_dc_ids", tuple(ids))
+
+    def to_dict(self) -> dict:
+        return {
+            "min_successes": self.min_successes,
+            "min_success_rate": self.min_success_rate,
+            "required_dc_ids": list(self.required_dc_ids),
+            "min_ping_count": self.min_ping_count,
+            "max_p95_ms": self.max_p95_ms,
+            "max_jitter_ms": self.max_jitter_ms,
+        }
 
 
 @dataclass
@@ -92,6 +138,8 @@ class ProxyResult:
 
     @property
     def successes(self) -> int:
+        if self.verification_profile == "telegram_session":
+            return self.strict_successes
         return sum(1 for s in self.samples if s.success)
 
     @property
@@ -112,9 +160,10 @@ class ProxyResult:
         return timeouts / len(self.samples)
 
     def _latencies(self) -> list:
+        samples = self._strict_samples() if self.verification_profile == "telegram_session" else self.samples
         return [
             s.total_latency_ms
-            for s in self.samples
+            for s in samples
             if s.success
             and isinstance(s.total_latency_ms, (int, float))
             and math.isfinite(s.total_latency_ms)
@@ -150,6 +199,10 @@ class ProxyResult:
     @property
     def stability(self) -> float:
         """0..1 score: 1 - coefficient of variation, clamped."""
+        if self.verification_profile == "telegram_session":
+            if self.strict_successes < 2 or self.telegram_jitter_ms is None:
+                return 0.0
+            return max(0.0, 1.0 - self.telegram_jitter_ms / self.quality_policy.max_jitter_ms)
         lats = self._latencies()
         if len(lats) < 2:
             return 1.0 if lats else 0.0
@@ -169,6 +222,103 @@ class ProxyResult:
         return FailureReason.NONE
 
     score: float = 0.0
+    verification_profile: str = "transport"
+    quality_policy: TelegramQualityPolicy = field(default_factory=TelegramQualityPolicy)
+
+    def _strict_samples(self) -> list[TestSample]:
+        if self.verification_profile != "telegram_session" or not isinstance(self.proxy, Proxy):
+            return []
+        return [
+            sample
+            for sample in self.samples
+            if sample.success
+            and sample.verification_level == "telegram_session"
+            and type(sample.total_latency_ms) in (int, float)
+            and math.isfinite(sample.total_latency_ms)
+            and sample.total_latency_ms >= 0
+            and type(sample.dc_id) is int
+            and 1 <= sample.dc_id <= 5
+            and isinstance(sample.ping_rtts_ms, (list, tuple))
+            and len(sample.ping_rtts_ms) >= self.quality_policy.min_ping_count
+            and all(
+                type(rtt) in (int, float) and math.isfinite(rtt) and rtt >= 0 for rtt in sample.ping_rtts_ms
+            )
+        ]
+
+    @property
+    def strict_successes(self) -> int:
+        return len(self._strict_samples())
+
+    @property
+    def dc_ids_verified(self) -> list[int]:
+        return sorted({sample.dc_id for sample in self._strict_samples()})
+
+    def _telegram_rtts(self) -> list[float]:
+        return [rtt for sample in self._strict_samples() for rtt in sample.ping_rtts_ms]
+
+    @property
+    def ping_count(self) -> int:
+        return len(self._telegram_rtts())
+
+    @property
+    def telegram_median_ms(self) -> Optional[float]:
+        values = sorted(self._telegram_rtts())
+        if not values:
+            return None
+        middle = len(values) // 2
+        return values[middle] if len(values) % 2 else (values[middle - 1] + values[middle]) / 2
+
+    @property
+    def telegram_p95_ms(self) -> Optional[float]:
+        values = sorted(self._telegram_rtts())
+        return values[math.ceil(0.95 * len(values)) - 1] if values else None
+
+    @property
+    def telegram_jitter_ms(self) -> Optional[float]:
+        values = self._telegram_rtts()
+        if len(values) < 2:
+            return None
+        return sum(abs(b - a) for a, b in zip(values, values[1:])) / (len(values) - 1)
+
+    @property
+    def reliability_lower_bound(self) -> float:
+        """Wilson lower bound (z=1.96), using finished connections, not correlated pings."""
+        attempts = self.attempts
+        if not attempts:
+            return 0.0
+        successes = (
+            self.strict_successes if self.verification_profile == "telegram_session" else self.successes
+        )
+        rate = successes / attempts
+        z2 = 1.96**2
+        numerator = (
+            rate
+            + z2 / (2 * attempts)
+            - 1.96 * math.sqrt((rate * (1 - rate) + z2 / (4 * attempts)) / attempts)
+        )
+        return max(0.0, min(1.0, numerator / (1 + z2 / attempts)))
+
+    @property
+    def strict_eligible(self) -> bool:
+        successes = self.strict_successes
+        p95, jitter = self.telegram_p95_ms, self.telegram_jitter_ms
+        policy = self.quality_policy
+        return (
+            self.verification_profile == "telegram_session"
+            and successes >= policy.min_successes
+            and successes / max(1, self.attempts) >= policy.min_success_rate
+            and set(policy.required_dc_ids).issubset(self.dc_ids_verified)
+            and p95 is not None
+            and p95 <= policy.max_p95_ms
+            and jitter is not None
+            and jitter <= policy.max_jitter_ms
+        )
+
+    @property
+    def ranking_latency_ms(self) -> Optional[float]:
+        return (
+            self.telegram_p95_ms if self.verification_profile == "telegram_session" else self.avg_latency_ms
+        )
 
     def to_dict(self) -> dict:
         d = self.proxy.to_dict()
@@ -191,6 +341,21 @@ class ProxyResult:
         if isinstance(self.proxy, Proxy):
             d["tg_link"] = self.proxy.tg_link()
             d["web_link"] = self.proxy.web_link()
+            d.update(
+                {
+                    "verification_profile": self.verification_profile,
+                    "strict_eligible": self.strict_eligible,
+                    "strict_successes": self.strict_successes,
+                    "dc_ids_verified": self.dc_ids_verified,
+                    "ping_count": self.ping_count,
+                    "telegram_median_ms": self.telegram_median_ms,
+                    "telegram_p95_ms": self.telegram_p95_ms,
+                    "telegram_jitter_ms": self.telegram_jitter_ms,
+                    "reliability_lower_bound": self.reliability_lower_bound,
+                    "strict_policy": self.quality_policy.to_dict(),
+                }
+            )
         else:
             d["uri"] = self.proxy.uri()
+            d["verification_profile"] = "web"
         return d

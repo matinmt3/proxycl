@@ -43,7 +43,25 @@ function secretIdentity(value) {
   } catch { return null; }
 }
 
-function safeConnection(proxy) {
+function strictQualified(row) {
+  const policy = row.strict_policy;
+  if (row.verification_profile !== "telegram_session" || row.strict_eligible !== true || !policy || typeof policy !== "object" || Array.isArray(policy)) return false;
+  const validDCs = values => Array.isArray(values) && values.every(value => Number.isInteger(value) && value >= 1 && value <= 5) && new Set(values).size === values.length;
+  if (!validDCs(policy.required_dc_ids) || !validDCs(row.dc_ids_verified) || new Set(policy.required_dc_ids).size < 2 || !policy.required_dc_ids.every(value => row.dc_ids_verified.includes(value))) return false;
+  if (!Number.isInteger(policy.min_successes) || policy.min_successes < 3 || !Number.isInteger(policy.min_ping_count) || policy.min_ping_count < 3 || !Number.isFinite(policy.min_success_rate) || policy.min_success_rate < .8 || policy.min_success_rate > 1) return false;
+  if (![row.attempts, row.successes, row.strict_successes].every(Number.isInteger) || row.strict_successes < policy.min_successes || row.strict_successes > row.successes || row.successes > row.attempts) return false;
+  const observed = row.strict_successes / row.attempts;
+  if (!Number.isFinite(row.success_rate) || Math.abs(row.success_rate - row.successes / row.attempts) > .0001) return false;
+  if (observed < policy.min_success_rate || !Number.isInteger(row.ping_count) || row.ping_count < row.strict_successes * policy.min_ping_count) return false;
+  if (![row.telegram_median_ms, row.telegram_p95_ms, row.telegram_jitter_ms, row.reliability_lower_bound].every(value => Number.isFinite(value) && value >= 0)) return false;
+  if (!Number.isFinite(policy.max_p95_ms) || policy.max_p95_ms <= 0 || !Number.isFinite(policy.max_jitter_ms) || policy.max_jitter_ms <= 0) return false;
+  const z2 = 1.96 ** 2;
+  const wilson = (observed + z2 / (2 * row.attempts) - 1.96 * Math.sqrt((observed * (1 - observed) + z2 / (4 * row.attempts)) / row.attempts)) / (1 + z2 / row.attempts);
+  return row.telegram_median_ms <= row.telegram_p95_ms && row.telegram_p95_ms <= policy.max_p95_ms && row.telegram_jitter_ms <= policy.max_jitter_ms && Math.abs(row.reliability_lower_bound - wilson) <= .0001;
+}
+
+function safeConnection(proxy, profile = "telegram_session") {
+  if (mode !== "web" && (profile !== "telegram_session" || !strictQualified(proxy))) return null;
   const text = proxy[{mtproto: "tg_link", telegram: "web_link", web: "uri"}[mode]];
   if (typeof text !== "string" || text.length > 2048 || /[\u0000-\u0020]/.test(text)) return null;
   try {
@@ -97,24 +115,39 @@ function node(tag, text = "", className = "") {
   return item;
 }
 
-function resultCard(proxy) {
+function resultCard(proxy, profile = proxy.verification_profile || "transport") {
+  const strict = mode !== "web" && profile === "telegram_session" && strictQualified(proxy);
   const item = node("li", "", "result-card");
   const head = node("div", "", "result-head");
   head.append(node("span", `#${proxy.rank}`, "rank"));
   const identity = node("div", "", "identity");
   const server = String(proxy.server);
   identity.append(node("b", `${server.includes(":") ? `[${server}]` : server}:${proxy.port}`, "endpoint"));
-  identity.append(node("span", mode === "mtproto" ? "MTProto · response verified" : mode === "telegram" ? "MTProto · HTTPS share link" : protocolNames[proxy.protocol] || "HTTP / SOCKS proxy", "protocol-label"));
+  identity.append(node("span", mode === "web" ? protocolNames[proxy.protocol] || "HTTP / SOCKS proxy" : strict ? "Strict Telegram check · server identity + encrypted pings" : "Transport probe only · re-scan for strict verification", "protocol-label"));
   head.append(identity);
   item.append(head);
   const measures = node("div", "", "result-measures");
-  for (const [label, value] of [["Latency", Number.isFinite(proxy.avg_latency_ms) ? `${Math.round(proxy.avg_latency_ms)} ms` : "—"], ["Success", percentage(proxy.success_rate)], ["Score", percentage(proxy.score)]]) {
+  const milliseconds = value => Number.isFinite(value) ? `${Math.round(value)} ms` : "—";
+  const passes = Number.isInteger(proxy.attempts) && Number.isInteger(strict ? proxy.strict_successes : proxy.successes) ? `${strict ? proxy.strict_successes : proxy.successes} / ${proxy.attempts}` : "Not recorded";
+  const measurements = mode === "web"
+    ? [["Latency", milliseconds(proxy.avg_latency_ms)], ["Success", percentage(proxy.success_rate)], ["Score", percentage(proxy.score)]]
+    : [[strict ? "Telegram RTT p95" : "Probe duration", milliseconds(strict ? proxy.telegram_p95_ms : proxy.avg_latency_ms)], [strict ? "Session passes" : "Probe passes", passes], [strict ? "Composite score" : "Diagnostic score", percentage(proxy.score)]];
+  for (const [label, value] of measurements) {
     const measure = node("div", "", "measure");
     measure.append(node("span", label), node("strong", value));
     measures.append(measure);
   }
-  item.append(measures, node("p", `Source: ${proxy.source}`, "result-source"));
-  const connection = safeConnection(proxy);
+  item.append(measures);
+  if (mode !== "web") {
+    if (strict) {
+      item.append(node("p", `Probe duration: ${milliseconds(proxy.avg_latency_ms)} · Telegram median: ${milliseconds(proxy.telegram_median_ms)} · Ping jitter: ${milliseconds(proxy.telegram_jitter_ms)} · ${proxy.ping_count} matched pongs · DCs ${proxy.dc_ids_verified.join(", ")}`, "measurement-note"));
+      item.append(node("p", `Reliability lower bound: ${percentage(proxy.reliability_lower_bound)} (95% Wilson, ${proxy.attempts} reconnect attempts). This is a short sample, not uptime.`, "measurement-note"));
+    } else {
+      item.append(node("p", Number.isInteger(proxy.successes) && proxy.successes >= 2 && Number.isFinite(proxy.stability) ? `Probe latency consistency: ${percentage(proxy.stability)} · diagnostic evidence only.` : "Probe latency consistency: insufficient samples.", "measurement-note"));
+    }
+  }
+  item.append(node("p", `Source: ${proxy.source}`, "result-source"));
+  const connection = safeConnection(proxy, profile);
   if (connection) {
     const actions = node("div", "", "result-actions");
     if (mode !== "web") {
@@ -131,7 +164,7 @@ function resultCard(proxy) {
     const details = node("details", "", "connection-details");
     details.append(node("summary", "View connection text"), node("code", connection));
     item.append(details);
-  } else item.append(node("p", "Connection text unavailable for this result.", "muted"));
+  } else item.append(node("p", mode === "web" ? "Connection text unavailable for this result." : "Read-only evidence. Run a strict scan before using this endpoint.", "muted"));
   return item;
 }
 
@@ -139,12 +172,12 @@ function filteredRows(snapshot) {
   const search = byId("search").value.trim().toLowerCase();
   const protocol = byId("protocol").value;
   const sort = byId("sortBy").value;
-  const rows = snapshot.rows.filter(proxy => (!search || `${proxy.server} ${proxy.source}`.toLowerCase().includes(search)) && (mode !== "web" || protocol === "all" || proxy.protocol === protocol));
+  const rows = snapshot.rows.filter(proxy => (mode === "web" || snapshot.summary?.verification_profile !== "telegram_session" || strictQualified(proxy)) && (!search || `${proxy.server} ${proxy.source}`.toLowerCase().includes(search)) && (mode !== "web" || protocol === "all" || proxy.protocol === protocol));
   if (sort !== "score") rows.sort((first, second) => {
     const a = first[sort]; const b = second[sort];
     if (!Number.isFinite(a)) return Number.isFinite(b) ? 1 : first.rank - second.rank;
     if (!Number.isFinite(b)) return -1;
-    const difference = sort === "avg_latency_ms" ? a - b : b - a;
+    const difference = sort.endsWith("_ms") ? a - b : b - a;
     return difference || first.rank - second.rank;
   });
   return {total: rows.length, rows: rows.slice(0, Number(byId("limit").value))};
@@ -152,9 +185,9 @@ function filteredRows(snapshot) {
 
 function renderResults(current) {
   const visible = filteredRows(current);
-  byId("results").replaceChildren(...visible.rows.map(resultCard));
+  byId("results").replaceChildren(...visible.rows.map(proxy => resultCard(proxy, current.summary?.verification_profile || (mode === "web" ? "web" : "transport"))));
   byId("count-displayed").textContent = count(visible.rows.length);
-  byId("result-count").textContent = `Showing ${visible.rows.length} of ${visible.total} eligible results`;
+  byId("result-count").textContent = `Showing ${visible.rows.length} of ${visible.total} ${mode !== "web" && current.summary?.verification_profile !== "telegram_session" ? "transport records" : "eligible results"}`;
   byId("empty-state").hidden = visible.rows.length > 0;
   byId("clear-filters").hidden = true;
   let title = "No scan yet";
@@ -194,13 +227,24 @@ function render(current, force = false) {
     current = {state: "missing", message: "No scan snapshot loaded.", rows: [], summary: {}, source_reports: []};
   }
   const summary = current.summary;
+  const profile = mode === "web" ? "web" : summary.verification_profile || "transport";
+  const strict = profile === "telegram_session" && current.rows.every(strictQualified) && [summary.strict_verified, summary.transport_reachable, summary.tested].every(Number.isInteger) && current.rows.length <= summary.strict_verified && summary.strict_verified <= summary.transport_reachable && summary.transport_reachable <= summary.tested && summary.verified === summary.strict_verified;
+  const invalidStrict = profile === "telegram_session" && !strict;
+  if (invalidStrict) current = {...current, state: "corrupt", rows: [], message: "Invalid strict verification evidence. Re-scan in the terminal."};
+  byId("verification-status").hidden = mode === "web";
+  byId("verification-status").textContent = invalidStrict ? "Invalid strict verification evidence. Re-scan in the terminal." : strict
+    ? "Strict Telegram checks: pinned server identity and encrypted ping replies. No account login or download-throughput measurement."
+    : "Transport evidence only. Re-scan for strict Telegram verification; legacy results are read-only.";
+  byId("verified-label").textContent = mode === "web" ? "Verified" : "Strict passed";
+  byId("verified-description").textContent = mode === "web" ? "Passed the origin probe" : "Qualified session checks";
   const interrupted = summary.interrupted === true;
   byId("tested-description").textContent = interrupted ? "Candidates with samples" : "Completed checks";
   byId("partial-note").hidden = !interrupted;
   byId("partial-note").textContent = `Stopped scan / partial results. Tested ${count(summary.tested)} of ${count(summary.selected)} selected candidates; ${count(summary.skipped)} skipped. These ranks cover the tested candidates.`;
   byId("scan-time-label").textContent = interrupted ? "SCAN STOPPED AT" : "LAST COMPLETED SCAN";
-  byId("results-title").textContent = interrupted ? "Verified partial results" : "Top verified results";
-  for (const key of ["selected", "tested", "verified"]) byId(`count-${key}`).textContent = count(summary[key]);
+  byId("results-title").textContent = mode !== "web" && !strict ? interrupted ? "Partial transport evidence" : "Transport evidence · strict re-scan needed" : interrupted ? "Verified partial results" : "Top verified results";
+  for (const key of ["selected", "tested"]) byId(`count-${key}`).textContent = count(summary[key]);
+  byId("count-verified").textContent = count(mode === "web" ? summary.verified : strict ? summary.strict_verified : 0);
   const timestamp = summary.completed_at ? new Date(summary.completed_at) : null;
   if (timestamp && !Number.isNaN(timestamp.getTime())) {
     byId("scan-time").textContent = timestamp.toLocaleString();
@@ -208,7 +252,7 @@ function render(current, force = false) {
     const minutes = Math.max(0, Math.floor((Date.now() - timestamp.getTime()) / 60000));
     byId("freshness").textContent = minutes < 1 ? "Just completed" : minutes < 60 ? `${minutes} min ago` : `${Math.floor(minutes / 60)} hours ago`;
     byId("freshness").className = minutes >= 60 ? "pill warning" : "pill neutral";
-    byId("scan-meta").textContent = `Requested: ${summary.requested_count == null ? "ALL" : count(summary.requested_count)} · Collected: ${count(summary.collected)} · Eligible: ${count(summary.eligible)} · Skipped: ${count(summary.skipped ?? (summary.selected - summary.tested))}`;
+    byId("scan-meta").textContent = `Requested: ${summary.requested_count == null ? "ALL" : count(summary.requested_count)} · Collected: ${count(summary.collected)} · Eligible: ${count(summary.eligible)} · Skipped: ${count(summary.skipped ?? (summary.selected - summary.tested))}${mode !== "web" ? ` · Transport reached: ${count(summary.transport_reachable)}` : ""}`;
   } else {
     byId("scan-time").textContent = current.state === "legacy" ? "Scan time unknown · v2 results" : "No completed scan";
     byId("scan-time").removeAttribute("datetime");
@@ -287,8 +331,11 @@ function selectMode(next, focus = false) {
   byId("proxy-panel").setAttribute("aria-labelledby", `tab-${mode}`);
   byId("mode-label").textContent = mode === "mtproto" ? "TELEGRAM TRANSPORT" : mode === "telegram" ? "TELEGRAM HTTPS SHARE LINKS" : "HTTP / SOCKS CONNECTIVITY";
   byId("mode-title").textContent = mode === "mtproto" ? "Your best MTProto connections" : mode === "telegram" ? "Your best Telegram Web Links" : "Your best HTTP / SOCKS proxies";
-  byId("mode-description").textContent = mode === "mtproto" ? "Verified MTProto responses, ranked by score with latency breaking ties." : mode === "telegram" ? "Verified MTProto proxies shared as HTTPS t.me/proxy links with their original server, port and secret." : "HTTP, HTTPS and SOCKS proxies checked through a certificate-verified HTTPS request.";
-  byId("verification-note").textContent = mode !== "web" ? "A matched MTProto response checks reachability at scan time; later connectivity can change." : "Verification checks the configured HTTPS origin at scan time. It does not guarantee access to every website.";
+  byId("mode-description").textContent = mode === "mtproto" ? "Strict MTProto server authentication and repeated encrypted Telegram pings; ranked by measured RTT and reconnect reliability." : mode === "telegram" ? "The same strict MTProto checks, shared as HTTPS t.me/proxy links with the original server, port and secret." : "HTTP, HTTPS and SOCKS proxies checked through a certificate-verified HTTPS request.";
+  byId("verification-note").textContent = mode !== "web" ? "Telegram RTT measures encrypted ping round trips, not file-transfer throughput or authorized messaging. Reconnect samples do not establish long-term uptime." : "Verification checks the configured HTTPS origin at scan time. It does not guarantee access to every website.";
+  byId("telegram-rtt-sort").hidden = mode === "web";
+  byId("probe-duration-sort").textContent = mode === "web" ? "Lowest latency" : "Shortest probe duration (diagnostic)";
+  byId("consistency-sort").textContent = mode === "web" ? "Most stable" : "Probe consistency (diagnostic)";
   byId("scan-command").textContent = `python main.py best10 --mode ${mode} --count ALL`;
   byId("protocol-field").hidden = mode !== "web";
   byId("search").value = "";

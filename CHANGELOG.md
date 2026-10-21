@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.2.0 — 2026-10-21
+
+- Make MTProto and Telegram-link scans require a pinned-key RSA_PAD/DH exchange plus repeated encrypted MTProto 2.0 ping replies across independent reconnects/DCs. No account login or Telegram API credentials are used.
+- Require at least three successful reconnects, configured DC coverage, observed pass rate and RTT/jitter limits before exporting usable Telegram links. Keep `transport` as an explicit diagnostic; old snapshots do not become strict results.
+- Rank strict results using reconnect confidence, Telegram RTT p95 and ping jitter. Show sample counts and the Wilson lower bound; separate full probe duration from encrypted-ping RTT and avoid download-throughput or long-term uptime claims.
+- Validate strict evidence/policy in dashboard APIs and client actions. Retain stopped-scan accounting and last-full snapshots; insufficient interrupted samples cannot populate the strict top ten. HTTP/SOCKS behavior is retained.
+- Keep generated MAIN authorization keys in RAM and attempt bounded server cleanup; failed cleanup may leave an unused server key with no account association.
+
 ## 3.1.0 — 2026-10-08
 
 - Add Telegram Web Link mode with real `https://t.me/proxy` links using the same MTProto sources/probe. Keep HTTP/SOCKS separate under the compatible CLI name `web`; expand the menu/dashboard to three clearly named groups.

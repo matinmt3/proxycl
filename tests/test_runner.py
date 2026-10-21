@@ -43,6 +43,7 @@ async def test_worker_pool_bounds_tasks_connections_and_preserves_input_order(mo
     monkeypatch.setattr("tester.runner.progress_bar", lambda **kwargs: bar)
     monkeypatch.setattr("tester.runner.asyncio.create_task", record_task)
     config = AppConfig.load()
+    config.testing.mtproto_profile = "transport"
     config.testing.workers = 3
     config.testing.retries = 2
     proxies = [Proxy(f"proxy{i}.example", 443, "00112233445566778899aabbccddeeff") for i in range(100)]
@@ -71,6 +72,7 @@ async def test_worker_pool_cancellation_drains_workers_and_closes_progress(monke
     monkeypatch.setattr("tester.runner.test_proxy_once", probe)
     monkeypatch.setattr("tester.runner.progress_bar", lambda **kwargs: bar)
     config = AppConfig.load()
+    config.testing.mtproto_profile = "transport"
     config.testing.workers = 2
     task = asyncio.create_task(ParallelTester(config).run_async([Proxy("example.com", 443, "a" * 32)] * 100))
     await entered.wait()

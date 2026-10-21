@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 
 from config.loader import AppConfig
-from utils.models import Proxy, ProxyResult, TestSample
+from tests.proxy_fixtures import qualified_result
+from utils.models import Proxy
 
 
 def proxy(host, source="a"):
@@ -52,9 +53,7 @@ def test_scan_selected_denominator_top10_and_snapshot_agree(cfg, monkeypatch):
 
     def probes(self, candidates):
         selected.extend(candidates)
-        return [
-            ProxyResult(p, [TestSample(True, total_latency_ms=100 + i)]) for i, p in enumerate(candidates)
-        ]
+        return [qualified_result(p, 100 + i) for i, p in enumerate(candidates)]
 
     monkeypatch.setattr(ParallelTester, "run", probes)
     outcome = run_scan(cfg, "mtproto", 12)
@@ -121,9 +120,7 @@ def test_top10_is_saved_even_when_other_top_sizes_are_configured(cfg, monkeypatc
     cfg.output.top_sizes = [2]
     rows = [proxy("1.1.1.1")]
     monkeypatch.setattr(Collector, "collect", lambda self: rows)
-    monkeypatch.setattr(
-        ParallelTester, "run", lambda self, p: [ProxyResult(p[0], [TestSample(True, total_latency_ms=10)])]
-    )
+    monkeypatch.setattr(ParallelTester, "run", lambda self, p: [qualified_result(p[0], 10)])
     outcome = run_scan(cfg)
     assert json.loads((outcome.folder / "top10.json").read_text())[0]["server"] == "1.1.1.1"
 

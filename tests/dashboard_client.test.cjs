@@ -42,6 +42,80 @@ function client() {
   return {context, element};
 }
 
+function strongRow(extra = {}) {
+  return {
+    server: "proxy.example", port: 443, source: "fixture", rank: 1,
+    secret: "00112233445566778899aabbccddeeff",
+    tg_link: "tg://proxy?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff",
+    verification_profile: "telegram_session", strict_eligible: true,
+    attempts: 3, successes: 3, strict_successes: 3, success_rate: 1,
+    dc_ids_verified: [2, 4], ping_count: 9,
+    telegram_median_ms: 100, telegram_p95_ms: 120, telegram_jitter_ms: 5,
+    reliability_lower_bound: .4385, avg_latency_ms: 2000, stability: .9, score: .8,
+    strict_policy: {min_successes: 3, min_success_rate: .8, required_dc_ids: [2,4], min_ping_count: 3, max_p95_ms: 1500, max_jitter_ms: 500},
+    ...extra,
+  };
+}
+
+function allText(element) {
+  return [element.textContent || "", ...element.children.map(allText)].join(" ");
+}
+
+test("strict cards show encrypted Telegram RTT and counts rather than download speed", () => {
+  const {context} = client();
+  context.row = strongRow();
+  const card = vm.runInContext("resultCard(row)", context);
+  const text = allText(card);
+  assert.match(text, /Telegram RTT p95.*120 ms/);
+  assert.match(text, /3\s*\/\s*3/);
+  assert.match(text, /Probe duration.*2000 ms/);
+  assert.match(text, /9 matched pongs/);
+  assert.doesNotMatch(text, /download|Mbps|MB\/s|Speed:/i);
+});
+
+test("fast single-sample and malformed proof never get usable Telegram actions", () => {
+  const {context} = client();
+  for (const extra of [
+    {attempts: 1, successes: 1, strict_successes: 1, ping_count: 3, avg_latency_ms: 1},
+    {verification_profile: "transport"}, {strict_policy: null}, {dc_ids_verified: [2]},
+    {ping_count: 8}, {telegram_p95_ms: 1501}, {strict_eligible: "true"},
+  ]) {
+    context.row = strongRow(extra);
+    assert.equal(vm.runInContext("safeConnection(row)", context), null);
+  }
+  context.row = strongRow();
+  assert.equal(vm.runInContext("safeConnection(row)", context), context.row.tg_link);
+});
+
+test("legacy snapshot is transport evidence and requests a strict rescan", () => {
+  const {context, element} = client();
+  context.current = {state: "ready", summary: {verified: 1}, source_reports: [], rows: [strongRow({verification_profile: undefined, strict_policy: undefined, attempts: 1, successes: 1})]};
+  vm.runInContext("render(current, true)", context);
+  assert.match(element("verification-status").textContent, /transport.*re-scan/i);
+  const text = allText(element("results"));
+  assert.match(text, /insufficient samples/i);
+  assert.doesNotMatch(text, /Telegram session verified/);
+  assert.equal(element("count-verified").textContent, "0");
+});
+
+test("Telegram latency sorting uses p95 instead of connection setup duration", () => {
+  const {context, element} = client();
+  context.current = {rows: [strongRow({rank: 1, avg_latency_ms: 1, telegram_p95_ms: 400}), strongRow({rank: 2, avg_latency_ms: 2000, telegram_p95_ms: 120})]};
+  element("sortBy").value = "telegram_p95_ms";
+  assert.deepEqual(Array.from(vm.runInContext("filteredRows(current).rows.map(row => row.rank)", context)), [2,1]);
+});
+
+test("a strict snapshot label cannot promote missing proof into counters or badges", () => {
+  const {context, element} = client();
+  context.current = {state: "ready", source_reports: [],
+    summary: {verification_profile: "telegram_session", tested: 1, verified: 1, strict_verified: 1, transport_reachable: 1},
+    rows: [strongRow({strict_policy: undefined})]};
+  vm.runInContext("render(current, true)", context);
+  assert.equal(element("count-verified").textContent, "0");
+  assert.match(element("verification-status").textContent, /invalid.*strict/i);
+  assert.equal(element("results").children.length, 0);
+});
+
 test("web copy actions accept default ports, SOCKS and IPv6", () => {
   const {context} = client();
   vm.runInContext("mode = 'web'", context);
@@ -64,8 +138,7 @@ test("connection actions reject credentials, wrong endpoints and injected scheme
     assert.equal(vm.runInContext("safeConnection(row)", context), null);
   }
   vm.runInContext("mode = 'mtproto'", context);
-  context.row = {server: "proxy.example", port: 443,
-    tg_link: "tg://proxy?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff"};
+  context.row = strongRow();
   assert.equal(vm.runInContext("safeConnection(row)", context), context.row.tg_link);
   context.row.tg_link += "&port=80";
   assert.equal(vm.runInContext("safeConnection(row)", context), null);
@@ -113,9 +186,9 @@ test("Telegram Web Link uses matched HTTPS share links and never HTTP proxy URIs
   assert.equal(vm.runInContext("mode", context), "telegram");
   assert.match(element("mode-title").textContent, /Telegram/);
   assert.equal(element("protocol-field").hidden, true);
-  context.row = {server: "proxy.example", port: 443, secret: "00112233445566778899aabbccddeeff",
+  context.row = strongRow({server: "proxy.example", port: 443, secret: "00112233445566778899aabbccddeeff",
     web_link: "https://t.me/proxy?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff",
-    uri: "http://proxy.example:443"};
+    uri: "http://proxy.example:443"});
   assert.equal(vm.runInContext("safeConnection(row)", context), context.row.web_link);
   for (const prefix of ["http://t.me/proxy", "https://t.me.evil.example/proxy", "https://t.me:8443/proxy", "https://user@t.me/proxy", "https://t.me/other"]) {
     context.row.web_link = prefix + "?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff";
@@ -155,8 +228,7 @@ test("interrupted scans display partial results and skipped candidates accuratel
 test("Telegram share links require a valid row secret and matching decoded identity", () => {
   const {context} = client();
   vm.runInContext("selectMode('telegram')", context);
-  context.row = {server: "proxy.example", port: 443,
-    web_link: "https://t.me/proxy?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff"};
+  context.row = strongRow({web_link: "https://t.me/proxy?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff"});
   for (const secret of [undefined, null, false, 1, "", "abcdefghijklmnop"]) {
     context.row.secret = secret;
     assert.equal(vm.runInContext("safeConnection(row)", context), null);
