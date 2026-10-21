@@ -126,6 +126,16 @@ class ScanConfig:
                 raise ValueError(f"scan.{name} must be true or false")
         if not isinstance(self.network, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", self.network):
             raise ValueError("scan.network must be 1-32 letters, digits, underscores or hyphens")
+        self.network = self.network.lower()
+        if self.network in {
+            "con",
+            "prn",
+            "aux",
+            "nul",
+            *(f"com{i}" for i in range(1, 10)),
+            *(f"lpt{i}" for i in range(1, 10)),
+        }:
+            raise ValueError("scan.network cannot be a reserved device name")
         limits = {
             "finalists": (1, 100),
             "finalist_retries": (1, 20),

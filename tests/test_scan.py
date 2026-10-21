@@ -38,7 +38,7 @@ def test_invalid_limit_rejected_before_any_collection(limit):
 @pytest.fixture
 def cfg(tmp_path):
     path = tmp_path / "config.yaml"
-    path.write_text("sources: []\n", encoding="utf-8")
+    path.write_text("sources: []\nscan:\n  strategy: single\n", encoding="utf-8")
     return AppConfig.load(path)
 
 

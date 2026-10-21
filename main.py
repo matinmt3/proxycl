@@ -7,16 +7,18 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import sys
 import textwrap
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 from config.loader import AppConfig
 from utils.logger import setup_logger
 
-__version__ = "3.2.0"
+__version__ = "3.3.0"
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
@@ -86,6 +88,26 @@ def run_pipeline(config: AppConfig, export: bool = True, *, mode: str = "mtproto
     from scan import run_scan
 
     outcome = run_scan(config, mode, limit, export)
+    _message(f"Network: {config.scan.network} | Strategy: {outcome.summary.get('strategy', 'single')}")
+    if outcome.summary.get("resumed"):
+        _message("Resumed matching saved attempts; completed samples were not counted twice.")
+    if outcome.summary.get("provisional"):
+        _message(
+            "PROVISIONAL: sustained finalist testing did not finish. These are strict observations so far."
+        )
+    if outcome.summary.get("strategy") == "staged":
+        _message(
+            f"Screened: {outcome.summary['prefilter_tested']} | Screen passed: {outcome.summary['prefilter_passed']} | Baseline finished: {outcome.summary['baseline_tested']}"
+        )
+        _message(
+            f"Sustained finalists: {outcome.summary['finalist_completed']} / {outcome.summary['finalist_selected']} | Extra connections: {outcome.summary['finalist_attempts']}"
+        )
+        rejected = outcome.summary.get("prefilter_failure_counts", {})
+        if rejected:
+            _message(
+                "Screening failures (not strict session attempts): "
+                + ", ".join(f"{name}={count}" for name, count in sorted(rejected.items()))
+            )
     if outcome.summary.get("interrupted"):
         _message(
             f"Stopped scan: {outcome.summary['tested']} / {outcome.summary['selected']} candidates have samples; "
@@ -158,6 +180,9 @@ def print_best10(results, output_folder: str, *, saved: bool = True, mode: str =
                 f"Authenticated reconnects: {result.strict_successes}/{result.attempts} | "
                 f"Matched pongs: {result.ping_count} | DCs: {result.dc_ids_verified}"
             )
+            _message(
+                f"Reliability lower bound: {result.reliability_lower_bound:.1%} (95% Wilson). A short sample does not establish uptime."
+            )
         _message(
             f"Pass rate: {result.success_rate:.0%} | Score: {result.score:.1%} | Samples: {result.attempts}"
         )
@@ -189,13 +214,73 @@ def cmd_collect(config: AppConfig, *, mode: str = "mtproto", limit: int | None =
 
 def cmd_benchmark(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
     from exporter.exporter import eligible_results
+    from scan import mode_folder
 
     results = eligible_results(run_pipeline(config, export=False, mode=mode, limit=limit), config.output)
-    print_best10(results, str(Path(config.output.folder) / mode), saved=False, mode=mode)
+    print_best10(results, str(mode_folder(config, mode)), saved=False, mode=mode)
 
 
 def cmd_export(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
     cmd_best10(config, mode=mode, limit=limit)
+
+
+def cmd_recheck(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    """Freshly probe up to twenty saved qualified endpoints on this network."""
+    from config.loader import SourceConfig, WebSourceConfig
+    from dashboard.data import _strict_qualified
+    from exporter.exporter import Exporter
+    from scan import mode_folder
+    from utils.scan_state import deserialize_proxy
+
+    folder = mode_folder(config, mode)
+    candidate_file = folder / "recheck-candidates.txt"
+    if not config.scan.resume:
+        path = folder / "proxy.json"
+        if not path.exists():
+            raise ValueError("No saved candidates for this network/mode. Run best10 first.")
+        if path.stat().st_size > 4 * 1024 * 1024 and (folder / "top10.json").is_file():
+            path = folder / "top10.json"
+        with path.open("rb") as stream:
+            content = stream.read(4 * 1024 * 1024 + 1)
+        if len(content) > 4 * 1024 * 1024:
+            raise ValueError("Saved candidate list exceeds the recheck safety limit")
+        rows = json.loads(content)
+        if not isinstance(rows, list):
+            raise ValueError("Invalid saved candidate list. Run a fresh best10 scan.")
+        candidates = []
+        for row in rows:
+            if not isinstance(row, dict) or (mode != "web" and not _strict_qualified(row)):
+                continue
+            candidate = deserialize_proxy(
+                {
+                    "kind": "web" if mode == "web" else "mtproto",
+                    **{
+                        key: row[key]
+                        for key in ("server", "port", "protocol" if mode == "web" else "secret")
+                        if key in row
+                    },
+                    "source": "saved-top",
+                }
+            )
+            candidates.append(candidate.uri() if mode == "web" else candidate.tg_link())
+            if len(candidates) == 20:
+                break
+        if not candidates:
+            raise ValueError("No qualified saved candidates. Run a fresh best10 scan.")
+        Exporter(replace(config.output, folder=str(folder)))._write(
+            candidate_file.name, "\n".join(candidates) + "\n"
+        )
+    elif not candidate_file.is_file():
+        raise ValueError("No saved recheck candidate file. Start a fresh recheck.")
+    prepared = replace(config, scan=replace(config.scan, source_health_enabled=False))
+    source_type = WebSourceConfig if mode == "web" else SourceConfig
+    selected_sources = [source_type("saved-top", "http_text", "file://" + str(candidate_file))]
+    if mode == "web":
+        prepared.web_sources = selected_sources
+    else:
+        prepared.sources = selected_sources
+    prepared._scan_command = "recheck"
+    return cmd_best10(prepared, mode=mode, limit=limit)
 
 
 def cmd_best10(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
@@ -212,9 +297,15 @@ def cmd_best10(config: AppConfig, *, mode: str = "mtproto", limit: int | None = 
 def cmd_dashboard(config: AppConfig, *, open_browser: bool = True) -> bool:
     """Serve the local dashboard with the standard library, including lite installs."""
     from dashboard.server import run
+    from scan import network_folder
 
     try:
-        run(config.dashboard.host, config.dashboard.port, config.output.folder, open_browser=open_browser)
+        run(
+            config.dashboard.host,
+            config.dashboard.port,
+            str(network_folder(config)),
+            open_browser=open_browser,
+        )
     except KeyboardInterrupt:
         print("\nDashboard stopped.")
     return True
@@ -234,7 +325,7 @@ def cmd_top(config: AppConfig, n: int, *, mode: str = "mtproto"):
     from scan import mode_folder
 
     path = mode_folder(config, mode) / "proxy.json"
-    if not path.exists() and mode == "mtproto":
+    if not path.exists() and mode == "mtproto" and config.scan.network == "default":
         path = Path(config.output.folder) / "proxy.json"  # v2 migration, MTProto only
     if not path.exists():
         print("No exported data yet. Run: python main.py export")
@@ -290,13 +381,49 @@ def cmd_top(config: AppConfig, n: int, *, mode: str = "mtproto"):
 
 
 def cmd_json(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    from scan import mode_folder
+
     cmd_best10(config, mode=mode, limit=limit)
-    print(str(Path(config.output.folder) / mode / "proxy.json"))
+    print(str(mode_folder(config, mode) / "proxy.json"))
 
 
 def cmd_csv(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    from scan import mode_folder
+
     cmd_best10(config, mode=mode, limit=limit)
-    print(str(Path(config.output.folder) / mode / "proxy.csv"))
+    print(str(mode_folder(config, mode) / "proxy.csv"))
+
+
+def cmd_history(config: AppConfig, n: int = 20, *, mode: str = "mtproto"):
+    from utils.scan_state import HistoryStore
+
+    rows = HistoryStore(Path(config.output.folder) / ".state", config.scan.network, mode).rows(limit=n)
+    print(f"\nHISTORY | network={config.scan.network} | mode={mode}")
+    if not rows:
+        _message("No saved history for this network. Run a scan first.")
+    for row in rows:
+        _message(json.dumps(row, ensure_ascii=False, sort_keys=True))
+    _message("History is past evidence. Run a fresh scan before choosing a connection.")
+
+
+def _network_name(value: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", value):
+        raise argparse.ArgumentTypeError("Network name: 1-32 letters, digits, underscores or hyphens")
+    from config.loader import ScanConfig
+
+    try:
+        return ScanConfig(network=value).validate().network
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _menu_mode() -> str | None:
+    value = input("Mode: 1) MTProto  2) Telegram Web Link  3) HTTP / SOCKS  0) Back: ").strip()
+    if value == "0":
+        return None
+    if value not in ("1", "2", "3"):
+        raise ValueError("Choose mode 1, 2, 3, or 0 to return")
+    return {"1": "mtproto", "2": "telegram", "3": "web"}[value]
 
 
 def _error(exc: Exception, config: AppConfig | None = None):
@@ -340,8 +467,12 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
         print("4) Open local web dashboard")
         print("5) Collect candidates (no testing)")
         print("6) Exit")
+        print("7) Resume the last interrupted scan")
+        print(f"8) Network profile: {config.scan.network}")
+        print("9) View network history")
+        print("10) Recheck saved top connections")
         try:
-            choice = input("\nChoose (1-6): ").strip()
+            choice = input("\nChoose (1-10): ").strip()
         except EOFError:
             _message("No keyboard input. Run a direct command, e.g. python main.py best10")
             return
@@ -367,8 +498,30 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
             elif choice == "6":
                 print("Bye!")
                 return
+            elif choice == "7":
+                mode = _menu_mode()
+                if mode:
+                    previous = config.scan.resume
+                    try:
+                        config.scan.resume = True
+                        cmd_best10(config, mode=mode, limit=None)
+                    finally:
+                        config.scan.resume = previous
+            elif choice == "8":
+                config.scan.network = _network_name(input("Network name (e.g. wifi, mobile, home): ").strip())
+                _message(
+                    f"Selected network: {config.scan.network}. Results, checkpoints and history stay separate."
+                )
+            elif choice == "9":
+                mode = _menu_mode()
+                if mode:
+                    cmd_history(config, mode=mode)
+            elif choice == "10":
+                mode = _menu_mode()
+                if mode:
+                    cmd_recheck(config, mode=mode)
             else:
-                print("Invalid choice. Type 1, 2, 3, 4, 5, or 6.")
+                print("Invalid choice. Type a number from 1 to 10.")
         except KeyboardInterrupt:
             print("\nCancelled. Returning to the menu.")
         except EOFError:
@@ -410,6 +563,9 @@ def main(argv: list[str] | None = None) -> int:
             "top",
             "json",
             "csv",
+            "history",
+            "selftest",
+            "recheck",
         ),
     )
     parser.add_argument(
@@ -435,12 +591,32 @@ def main(argv: list[str] | None = None) -> int:
         metavar="ALL|N",
         help="candidates to test, not the top10 result count (default: ALL)",
     )
+    parser.add_argument(
+        "--network", type=_network_name, help="named local network profile, e.g. wifi or mobile"
+    )
+    parser.add_argument("--resume", action="store_true", help="continue a recent matching checkpoint")
+    parser.add_argument(
+        "--single-stage", action="store_true", help="strict baseline scan without sustained finalists"
+    )
+    parser.add_argument(
+        "--no-prefilter", action="store_true", help="apply full strict tests to every selected candidate"
+    )
     args = parser.parse_args(argv)
-    if args.n is not None and args.command != "top":
-        parser.error("N is only supported with the 'top' command")
+    if args.n is not None and args.command not in ("top", "history"):
+        parser.error("N is only supported with the 'top' and 'history' commands")
+    if args.resume and args.command not in ("menu", "run", "best10", "export", "json", "csv", "recheck"):
+        parser.error("--resume requires a saved scan command (best10, run, export, json, csv, or menu)")
     config = None
     try:
         config = load_config(args.config)
+        if args.network is not None:
+            config.scan.network = args.network
+        if args.resume:
+            config.scan.resume = True
+        if args.single_stage:
+            config.scan.strategy = "single"
+        if args.no_prefilter:
+            config.scan.prefilter = False
         setup_logger(
             name="mtselector", log_dir=config.logging.log_dir, level=getattr(logging, config.logging.level)
         )
@@ -463,6 +639,12 @@ def main(argv: list[str] | None = None) -> int:
                 cmd_top(config, args.n or 10)
             else:
                 cmd_top(config, args.n or 10, mode=args.mode)
+        elif args.command == "history":
+            cmd_history(config, args.n or 20, mode=args.mode)
+        elif args.command == "selftest":
+            from utils.selftest import run_selftest
+
+            return run_selftest(config)
         else:
             commands = {
                 "best10": cmd_best10,
@@ -472,6 +654,7 @@ def main(argv: list[str] | None = None) -> int:
                 "scheduler": cmd_scheduler,
                 "json": cmd_json,
                 "csv": cmd_csv,
+                "recheck": cmd_recheck,
             }
             if args.mode == "mtproto" and args.count is None:
                 commands[args.command](config)

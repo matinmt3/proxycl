@@ -160,11 +160,16 @@ def test_native_sigint_before_first_finished_attempt_carries_no_synthetic_result
     assert report["opened"] == report["closed"] == 2
 
 
-@pytest.mark.parametrize("mode", ["mtproto", "telegram", "web"])
-def test_native_sigint_cli_publishes_observed_top10_and_preserves_last_completed_generation(mode, tmp_path):
+@pytest.mark.parametrize(
+    "mode, staged",
+    [("mtproto", False), ("telegram", False), ("web", False), ("mtproto", True), ("telegram", True)],
+)
+def test_native_sigint_cli_publishes_observed_top10_and_preserves_last_completed_generation(
+    mode, staged, tmp_path
+):
     script = Path(__file__).parent / "fixtures" / "interruption_child.py"
     result = subprocess.run(
-        [sys.executable, "-u", str(script), mode, str(tmp_path)],
+        [sys.executable, "-u", str(script), mode, str(tmp_path)] + (["--staged"] if staged else []),
         cwd=Path(__file__).parents[1],
         capture_output=True,
         text=True,
@@ -183,6 +188,9 @@ def test_native_sigint_cli_publishes_observed_top10_and_preserves_last_completed
     top10 = json.loads((folder / "top10.json").read_text(encoding="utf-8"))
     readable = (folder / "best10_links.txt").read_text(encoding="utf-8")
     assert snapshot["summary"]["interrupted"] is True
+    assert snapshot["summary"]["provisional"] is staged
+    if staged:
+        assert snapshot["summary"]["prefilter_tested"] == 4
     assert {
         field: snapshot["summary"][field]
         for field in ("selected", "tested", "skipped", "fully_tested", "partial_tested", "retry_count")

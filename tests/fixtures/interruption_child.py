@@ -110,6 +110,7 @@ else:
     protocol.test_proxy_strict = network_probe
 module.test_proxy_once = network_probe
 pipeline = len(sys.argv) > 2 and not empty
+staged_scan = "--staged" in sys.argv
 if pipeline:
     root = Path(sys.argv[2])
     root.mkdir(parents=True, exist_ok=True)
@@ -117,6 +118,7 @@ if pipeline:
     config_path.write_text(
         f"sources: []\nweb_sources: []\ntesting:\n  workers: 2\n  retries: {retries}\n"
         "  timeout_seconds: 30\n  connect_timeout_seconds: 30\n"
+        f"scan:\n  strategy: {'staged' if staged_scan else 'single'}\n"
         "output:\n  folder: results\n  top_sizes: []\n",
         encoding="utf-8",
     )
@@ -133,6 +135,14 @@ if pipeline:
         return proxies
 
     Collector.collect = collect
+    if staged_scan:
+        from tester import staged
+
+        async def prefilter(proxy, **kwargs):
+            return TestSample(True)
+
+        staged.test_proxy_once = prefilter
+        staged.test_proxy_strict = network_probe
 try:
     if pipeline:
         import main

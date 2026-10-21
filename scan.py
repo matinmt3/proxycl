@@ -2,16 +2,27 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import math
+import shutil
+import sys
+import time
 from collections import Counter, deque
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from config.loader import AppConfig
 
 MODES = ("mtproto", "telegram", "web")
+
+
+def network_folder(config: AppConfig) -> Path:
+    config.scan.validate()
+    root = Path(config.output.folder)
+    return root if config.scan.network == "default" else root / "networks" / config.scan.network
 
 
 def validate_request(mode: str, limit: int | None) -> None:
@@ -23,7 +34,7 @@ def validate_request(mode: str, limit: int | None) -> None:
 
 def mode_folder(config: AppConfig, mode: str) -> Path:
     validate_request(mode, None)
-    return Path(config.output.folder) / mode
+    return network_folder(config) / mode
 
 
 def select_candidates(proxies: list, limit: int | None) -> list:
@@ -61,13 +72,130 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+def _resume_pointer(config, mode):
+    return Path(config.output.folder) / ".state" / f"resume-{mode}-{config.scan.network}.json"
+
+
+def _checkpoint_store(config, mode, backend="json"):
+    from utils.scan_state import CheckpointStore, scan_fingerprint
+
+    store_type = CheckpointStore
+    if backend == "sqlite":
+        from utils.large_checkpoint import SQLiteCheckpointStore
+
+        store_type = SQLiteCheckpointStore
+    elif backend != "json":
+        raise ValueError("Unknown checkpoint backend; start a fresh scan")
+    return store_type(
+        Path(config.output.folder) / ".state",
+        mode=mode,
+        network=config.scan.network,
+        fingerprint=scan_fingerprint(config, mode),
+        max_age_seconds=config.scan.checkpoint_max_age_minutes * 60,
+    )
+
+
+def _load_checkpoint(config, mode):
+    path = _resume_pointer(config, mode)
+    pointer = None
+    if path.exists():
+        with path.open("rb") as stream:
+            content = stream.read(4097)
+        if len(content) > 4096:
+            raise ValueError("Invalid resume pointer; start a fresh scan")
+        pointer = json.loads(content)
+        if (
+            not isinstance(pointer, dict)
+            or type(pointer.get("version")) is not int
+            or pointer["version"] != 1
+            or pointer.get("mode") != mode
+            or pointer.get("network") != config.scan.network
+        ):
+            raise ValueError("Resume pointer mode/network mismatch; start a fresh scan")
+    store = _checkpoint_store(config, mode, pointer.get("backend", "json") if pointer else "json")
+    candidates, state = store.load()
+    context = state.get("context")
+    if not isinstance(context, dict) or not isinstance(state.get("engine"), dict):
+        raise ValueError("Checkpoint has no scan context; start a fresh scan")
+    try:
+        UUID(context["run_id"])
+        started = datetime.fromisoformat(context["started_at"])
+        if started.tzinfo is None:
+            raise ValueError("Missing timezone")
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("Invalid checkpoint run identity or time; start a fresh scan") from exc
+    if pointer is not None and pointer.get("run_id") != context.get("run_id"):
+        raise ValueError("Checkpoint generation changed; start a fresh scan")
+    if type(context.get("collected")) is not int or context["collected"] < len(candidates):
+        raise ValueError("Checkpoint collection counts are invalid")
+    validate_request(mode, context.get("requested_count"))
+    if not isinstance(context.get("source_reports"), list):
+        raise ValueError("Checkpoint source reports are invalid")
+    return store, candidates, state
+
+
+def _safe_reports(reports):
+    """Keep public health fields without persisting custom feed URLs."""
+    import re
+
+    safe = []
+    fields = (
+        "name",
+        "status",
+        "count",
+        "error",
+        "checked",
+        "qualified",
+        "strict_qualified",
+        "cooldown_until",
+        "quality_attribution",
+    )
+    for report in reports:
+        row = {key: report[key] for key in fields if key in report}
+        for key in ("name", "error"):
+            if isinstance(row.get(key), str):
+                row[key] = re.sub(r"(?:https?|file)://\S+", "[feed]", row[key])[:200]
+        safe.append(row)
+    return safe
+
+
+def _restore_collection(collector, config, candidates, reports):
+    """Restore attribution only where a stored source name is unambiguous."""
+    from collector.health import source_identity
+
+    sources = config.web_sources if any(hasattr(p, "protocol") for p in candidates) else config.sources
+    enabled = [source for source in sources if source.enabled]
+    names = {}
+    for source in enabled:
+        names.setdefault(source.name, set()).add(source_identity(source))
+    collector.source_reports = reports
+    collector._enabled_sources = enabled
+    collector._source_by_proxy = {
+        proxy.key(): next(iter(names[proxy.source]))
+        for proxy in candidates
+        if len(names.get(proxy.source, ())) == 1
+    }
+    collector._collection_completed = len(reports) == len(enabled)
+
+
 def run_scan(
     config: AppConfig, mode: str = "mtproto", limit: int | None = None, export: bool = True
 ) -> ScanOutcome:
     validate_request(mode, limit)
+    config.scan.validate()
+    if config.scan.resume and not export:
+        raise ValueError("Resume needs checkpoint exports. Use best10 --resume instead of benchmark.")
+    if not export:
+        config = replace(
+            config,
+            scan=replace(
+                config.scan, source_health_enabled=False, checkpoint_enabled=False, history_enabled=False
+            ),
+        )
     from benchmark.scorer import rank, score_all
     from exporter.exporter import Exporter, eligible_results
     from utils.interruption import ScanInterrupted
+    from utils.scan_state import HistoryStore, deserialize_result, serialize_result, write_json_atomic
 
     if mode in ("mtproto", "telegram"):
         from collector.collector import Collector
@@ -84,14 +212,212 @@ def run_scan(
         from webproxy.tester import WebTester
 
         collector, tester, exporter_type = WebCollector(config), WebTester(config), WebExporter
-    started = _now()
+    staged = (
+        mode != "web"
+        and config.testing.mtproto_profile == "telegram_session"
+        and config.scan.strategy == "staged"
+    )
+    folder = mode_folder(config, mode)
+    store, restored = None, None
+    context = {"run_id": str(uuid4()), "started_at": _now()}
     interrupted = False
     profile = "web" if mode == "web" else config.testing.mtproto_profile
-    print(f"\n[{mode.upper()}] Collecting source feeds...", flush=True)
-    candidates = select_candidates(collector.collect(), None)
-    selected = select_candidates(candidates, limit)
+    if config.scan.resume:
+        store, selected, restored = _load_checkpoint(config, mode)
+        context = restored["context"]
+        previous_limit = context.get("requested_count")
+        if limit is not None and limit != previous_limit:
+            raise ValueError(
+                "Checkpoint candidate count differs. Resume without --count, or start a fresh scan."
+            )
+        limit = previous_limit
+        collected_count = context["collected"]
+        _restore_collection(collector, config, selected, context["source_reports"])
+        print(f"\n[{mode.upper()}] Resuming saved evidence on network {config.scan.network}.", flush=True)
+    else:
+        print(f"\n[{mode.upper()}] Collecting source feeds | network={config.scan.network}...", flush=True)
+        candidates = select_candidates(collector.collect(), None)
+        collected_count = len(candidates)
+        selected = select_candidates(candidates, limit)
+        context.update(
+            collected=collected_count,
+            requested_count=limit,
+            source_reports=_safe_reports(collector.source_reports),
+        )
+        if export and config.scan.checkpoint_enabled:
+            store = _checkpoint_store(
+                config, mode, "sqlite" if mode == "web" and len(selected) > 20_000 else "json"
+            )
     requested = "ALL" if limit is None else str(limit)
-    print(f"Collected: {len(candidates)} | Selected: {len(selected)} | Request: {requested}", flush=True)
+    print(f"Collected: {collected_count} | Selected: {len(selected)} | Request: {requested}", flush=True)
+    progress = {
+        "stage": "baseline" if staged else "testing",
+        "completed": 0,
+        "total": len(selected),
+        "qualified": 0,
+        "remaining_seconds": None,
+    }
+    last_saved, saved_stage = float("-inf"), None
+    progress_stage, progress_started = None, time.monotonic()
+    last_printed = float("-inf")
+    warnings = []
+
+    def update_progress(update):
+        nonlocal progress, progress_stage, progress_started, last_printed
+        changed = update.get("stage") != progress.get("stage")
+        progress = dict(update)
+        if progress.get("stage") != progress_stage:
+            progress_stage, progress_started = progress.get("stage"), time.monotonic()
+        if progress.get("stage") == "finalists":
+            progress["completed"] = progress.get("finalist_attempts_completed", 0)
+            progress["total"] = progress.get("finalists_selected", 0) * config.scan.finalist_retries
+        done, total = progress.get("completed", 0), progress.get("total", 0)
+        progress["remaining_seconds"] = (
+            ((total - done) * (time.monotonic() - progress_started) / done) if 3 <= done < total else None
+        )
+        now = time.monotonic()
+        if changed or (sys.stdout.isatty() and now - last_printed >= 1):
+            last_printed = now
+            label = f"[{str(progress.get('stage', 'testing')).upper()}] {done}/{total} | passed {progress.get('qualified', 0)}"
+            if progress["remaining_seconds"] is not None:
+                label += f" | ETA ~{math.ceil(progress['remaining_seconds'] / 60)}m"
+            if sys.stdout.isatty():
+                width = max(20, shutil.get_terminal_size(fallback=(40, 24)).columns - 1)
+                print("\r" + label[:width].ljust(width), end="\n" if changed else "", flush=True)
+            else:
+                print(label, flush=True)
+
+    def progress_payload(active=True):
+        return {
+            "version": 1,
+            "mode": mode,
+            "network": config.scan.network,
+            "run_id": context["run_id"],
+            "updated_at": _now(),
+            **progress,
+            "active": active,
+            "resumable": bool(store),
+            "command": getattr(config, "_scan_command", "best10"),
+        }
+
+    def save_state(state, active=True):
+        nonlocal store
+        if store is not None:
+            try:
+                store.save(selected, {"engine": state, "context": context})
+                write_json_atomic(
+                    _resume_pointer(config, mode),
+                    {
+                        "version": 1,
+                        "mode": mode,
+                        "network": config.scan.network,
+                        "run_id": context["run_id"],
+                        "backend": "sqlite" if store.path.suffix == ".sqlite3" else "json",
+                    },
+                )
+            except OSError as exc:
+                warning = f"Checkpoint unavailable ({type(exc).__name__}); this run cannot resume."
+                print(warning, flush=True)
+                warnings.append(warning)
+                store = None
+        if export:
+            try:
+                write_json_atomic(folder / "progress.json", progress_payload(active))
+            except OSError as exc:
+                warning = f"Live progress unavailable ({type(exc).__name__})."
+                if warning not in warnings:
+                    print(warning, flush=True)
+                    warnings.append(warning)
+
+    async def checkpoint(state):
+        nonlocal last_saved, saved_stage
+        now = time.monotonic()
+        interval = 5 if len(selected) > 20_000 else 1
+        if now - last_saved < interval and state.get("stage") == saved_stage:
+            return
+        last_saved, saved_stage = now, state.get("stage")
+        if staged:
+            update_progress(tester.summary)
+        await asyncio.to_thread(save_state, state)
+
+    def single_state(results):
+        return {
+            "schema": 1,
+            "stage": "testing",
+            "results": [serialize_result(result) for result in results if result.samples],
+        }
+
+    if staged:
+        from tester.staged import StagedTester
+
+        tester = StagedTester(
+            config,
+            initial_state=restored["engine"] if restored else None,
+            on_checkpoint=checkpoint,
+            on_progress=update_progress,
+        )
+    else:
+        if restored:
+            engine = restored["engine"]
+            if (
+                engine.get("schema") != 1
+                or engine.get("stage") not in ("testing", "complete")
+                or not isinstance(engine.get("results"), list)
+            ):
+                raise ValueError("Invalid saved probe state; start a fresh scan")
+            tester.initial_results = [deserialize_result(row) for row in engine["results"]]
+            keys = {proxy.key() for proxy in selected}
+            if len({row.proxy.key() for row in tester.initial_results}) != len(tester.initial_results) or any(
+                row.proxy.key() not in keys or row.attempts > config.testing.retries
+                for row in tester.initial_results
+            ):
+                raise ValueError("Checkpoint results do not match the selected candidates")
+            if mode != "web":
+                rebuilt = []
+                for saved in tester.initial_results:
+                    if saved.verification_profile != config.testing.mtproto_profile:
+                        raise ValueError("Checkpoint verification profile differs from current config")
+                    fresh = tester._new_result(saved.proxy)
+                    fresh.samples = list(saved.samples)
+                    rebuilt.append(fresh)
+                tester.initial_results = rebuilt
+
+        sample_checkpoint_lock = asyncio.Lock()
+
+        async def save_finished_sample(result):
+            nonlocal last_saved, saved_stage
+            now = time.monotonic()
+            if now - last_saved < (5 if len(selected) > 20_000 else 1):
+                return
+            last_saved, saved_stage = now, "testing"
+            current = [
+                replace(row, samples=list(row.samples))
+                for row in tester._current_results
+                if row is not None and row.samples
+            ]
+            update_progress(
+                {
+                    "stage": "testing",
+                    "completed": sum(row.attempts >= config.testing.retries for row in current),
+                    "total": len(selected),
+                    "qualified": sum(row.successes > 0 for row in current),
+                    "remaining_seconds": None,
+                }
+            )
+            state = await asyncio.to_thread(single_state, current)
+            await asyncio.to_thread(save_state, state)
+
+        async def finished_sample(result):
+            async with sample_checkpoint_lock:
+                await save_finished_sample(result)
+
+        tester.on_sample = finished_sample
+    if export:
+        save_state(
+            restored["engine"]
+            if restored
+            else (tester.state if staged else single_state(getattr(tester, "initial_results", [])))
+        )
     if selected:
         from tester.runner import worker_count
 
@@ -139,7 +465,6 @@ def run_scan(
         results = rank(score_all(results, config.scoring))
     else:
         results = []
-    folder = mode_folder(config, mode)
     output_cfg = replace(config.output, folder=str(folder))
     # Filtering does not need to create an output directory in benchmark-only runs.
     eligible = eligible_results(results, output_cfg)
@@ -147,8 +472,8 @@ def run_scan(
     reachable = sum(r.successes > 0 and r.avg_latency_ms is not None for r in results)
     strict_verified = len(eligible) if mode != "web" else 0
     summary = {
-        "run_id": str(uuid4()),
-        "started_at": started,
+        "run_id": context["run_id"],
+        "started_at": context["started_at"],
         "completed_at": _now(),
         "requested_count": limit,
         "interrupted": interrupted,
@@ -156,7 +481,7 @@ def run_scan(
         "verification_profile": profile,
         "transport_reachable": reachable,
         "strict_verified": strict_verified,
-        "collected": len(candidates),
+        "collected": collected_count,
         "selected": len(selected),
         "tested": len(results),
         "fully_tested": sum(r.attempts >= config.testing.retries for r in results),
@@ -167,7 +492,43 @@ def run_scan(
         "displayed": min(10, len(eligible)),
         "failure_counts": dict(sorted(failures.items())),
     }
-    reports = list(getattr(collector, "source_reports", []))
+    stage_summary = tester.summary if staged else {}
+    summary.update(
+        strategy="staged" if staged else "single",
+        network=config.scan.network,
+        resumed=bool(restored),
+        stage="stopped" if interrupted else "complete",
+        provisional=bool(staged and interrupted),
+        interrupted_stage=stage_summary.get("stage") if interrupted else None,
+        prefilter_tested=stage_summary.get("prefilter_tested", 0),
+        prefilter_passed=stage_summary.get("prefilter_passed", 0),
+        baseline_tested=stage_summary.get("baseline_tested", len(results)),
+        finalist_selected=stage_summary.get("finalists_selected", 0),
+        finalist_completed=stage_summary.get("finalists_tested", 0),
+        finalist_attempts=stage_summary.get("finalist_attempts_completed", 0),
+        state_warnings=warnings,
+        command=getattr(config, "_scan_command", "best10"),
+    )
+    if staged:
+        summary["prefilter_failure_counts"] = dict(
+            Counter(row["reason"] for row in tester.state["prefilter"].values() if not row["passed"])
+        )
+    reports = _safe_reports(collector.record_quality(results))
+    context["source_reports"] = reports
+    update_progress(
+        {
+            "stage": summary["stage"],
+            "completed": len(results) if interrupted else len(selected),
+            "total": len(selected),
+            "qualified": len(eligible),
+            "remaining_seconds": None,
+        }
+    )
+    if export:
+        state = tester.state if staged else single_state(results)
+        if not interrupted:
+            state = {**state, "stage": "complete"}
+        save_state(state, active=False)
     if export:
         import json
 
@@ -194,6 +555,30 @@ def run_scan(
                 f"Tested {len(results)} of {len(selected)}; skipped {summary['skipped']}.\n\n"
                 + readable.read_text(encoding="utf-8"),
             )
+        if config.scan.history_enabled:
+            try:
+                history = HistoryStore(Path(config.output.folder) / ".state", config.scan.network, mode)
+                summary["history_recorded"] = min(len(results), 1000)
+                summary["history_truncated"] = len(results) > 1000
+                history.record(context["run_id"], results[:1000], summary)
+                exporter._write(
+                    "history.json",
+                    json.dumps(
+                        {
+                            "version": 1,
+                            "mode": mode,
+                            "network": config.scan.network,
+                            "rows": history.rows(limit=20),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                        allow_nan=False,
+                    ),
+                )
+            except (OSError, ValueError) as exc:
+                warning = f"History unavailable ({type(exc).__name__}); current results are still exported."
+                print(warning, flush=True)
+                warnings.append(warning)
         # Keep completed observations even when they do not satisfy strict
         # eligibility. No session/auth keys are ever part of these models.
         observations = {
@@ -202,6 +587,8 @@ def run_scan(
             "summary": summary,
             "rows": [dict(r.to_dict(), samples=[asdict(sample) for sample in r.samples]) for r in results],
         }
+        if staged:
+            observations["prefilter_results"] = tester.state["prefilter"]
         exporter._write(
             "observations.json", json.dumps(observations, ensure_ascii=False, indent=2, allow_nan=False)
         )
@@ -216,4 +603,12 @@ def run_scan(
         exporter._write("snapshot.json", encoded)
         if not interrupted:
             exporter._write("completed_snapshot.json", encoded)
+            if store is not None:
+                try:
+                    store.complete()
+                except (OSError, ValueError) as exc:
+                    print(
+                        f"Could not mark checkpoint complete ({type(exc).__name__}). Current exports are saved.",
+                        flush=True,
+                    )
     return ScanOutcome(results, eligible, eligible[:10], summary, reports, folder)

@@ -19,6 +19,7 @@ def test_scan_defaults_enable_bounded_stages_and_separate_network_history():
         ("network", "../other"),
         ("network", ""),
         ("network", "a" * 33),
+        ("network", "CON"),
         ("finalists", True),
         ("finalists", 101),
         ("finalist_retries", 0),
@@ -39,6 +40,10 @@ def test_scan_configuration_rejects_unsafe_or_unbounded_values(name, value):
 def test_resume_requires_a_checkpoint():
     with pytest.raises(ValueError, match="checkpoint"):
         ScanConfig(resume=True, checkpoint_enabled=False).validate()
+
+
+def test_network_names_have_consistent_case_across_platforms():
+    assert ScanConfig(network="WiFi").validate().network == "wifi"
 
 
 def test_external_config_accepts_scan_settings_and_keeps_its_paths(tmp_path):

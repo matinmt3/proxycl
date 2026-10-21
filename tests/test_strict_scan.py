@@ -11,7 +11,7 @@ from utils.models import Proxy, ProxyResult, TestSample
 @pytest.fixture
 def config(tmp_path):
     path = tmp_path / "settings.yaml"
-    path.write_text("sources: []\nweb_sources: []\n", encoding="utf-8")
+    path.write_text("sources: []\nweb_sources: []\nscan:\n  strategy: single\n", encoding="utf-8")
     return AppConfig.load(path)
 
 
