@@ -169,7 +169,7 @@ class ScanController:
             "source_add": {"action", "mode", "name", "url", "type", "protocol"},
             "source_manual": {"action", "mode", "name", "text"},
             "source_toggle": {"action", "id", "enabled"},
-            "favourite_add": {"action", "mode", "network", "rank"},
+            "favourite_add": {"action", "mode", "network", "rank", "candidate_id"},
             "favourite_remove": {"action", "id"},
             "favourite_recheck": {"action", "mode", "network"},
             "doctor": {"action"},
@@ -257,6 +257,12 @@ class ScanController:
                     "/api/snapshot", Path(self._config.output.folder), {"mode": [mode], "network": [network]}
                 )
                 row = next((row for row in current["rows"] if row["rank"] == rank), None)
+                if "candidate_id" in body and (
+                    not isinstance(body["candidate_id"], str)
+                    or row is None
+                    or row.get("candidate_id") != body["candidate_id"]
+                ):
+                    raise ControlError("This result changed; refresh before saving a favourite", 409)
                 if row is None or row.get("evidence_status") != "fresh":
                     raise ControlError("Recheck this candidate before saving a favourite")
                 kind = "mtproto" if mode in {"mtproto", "telegram"} else mode

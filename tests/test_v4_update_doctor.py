@@ -123,6 +123,34 @@ def test_runtime_pointer_and_cleanup_cannot_escape(tmp_path):
     assert outside.read_text() == "keep"
 
 
+@pytest.mark.parametrize("damage", ["missing_runtime", "corrupt_pointer"])
+def test_rollback_recovers_even_when_candidate_runtime_is_unusable(repositories, damage):
+    local, _, old, _ = repositories
+    updater.update(local)
+    pointer = local / ".revmamad" / "active-runtime.json"
+    if damage == "missing_runtime":
+        updater.runtime_python(local, updater._read(pointer)).unlink()
+    else:
+        pointer.write_text("{broken")
+    assert updater.update(local, rollback=True)["status"] == "rolled_back"
+    assert git(local, "rev-parse", "HEAD") == old
+    assert not pointer.exists()
+
+
+def test_updates_with_different_output_directories_share_installation_lock(repositories):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from utils.process_lock import OutputRootBusy, OutputRootLock
+
+    local, _, old, _ = repositories
+    with OutputRootLock(local / ".revmamad" / "updates", operation="update"):
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            task = pool.submit(updater.update, local, output_folder=local / "different-output")
+            with pytest.raises(OutputRootBusy):
+                task.result(timeout=20)
+    assert git(local, "rev-parse", "HEAD") == old
+
+
 def test_rollback_refuses_new_personal_file_at_restored_path(repositories):
     local, remote, _, _ = repositories
     git(remote, "rm", ".gitignore")

@@ -34,7 +34,7 @@ For v4 RC, the additional certified-TLS harness passed **8/8 cases** (four carri
 
 | Client evidence | Version actually tested | Status |
 | --- | --- | --- |
-| Native REVMAMAD / Python on Windows | 4.0.0-rc.1 / 3.14.6 | Controlled TLS relay contract passed |
+| Native REVMAMAD / Python on Windows | 4.0.0-rc.2 / 3.14.6 | Controlled TLS relay contract passed |
 | Telegram Android on a physical phone | None recorded | Pending; no compatibility minimum claimed |
 | Telegram Desktop WEB-capable client | None recorded | Pending |
 

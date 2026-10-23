@@ -8,9 +8,17 @@
 - [x] Doctor, staged updater/rollback and compatible CLI integration.
 - [x] WEB TLS conformance and compatibility evidence.
 - [x] Independent review and full integrated local verification.
-- [ ] Build and independently verify extracted release ZIP.
-- [ ] Publish prerelease and verify remote refs and downloaded asset hashes.
+- [x] Build and independently verify extracted RC1 release ZIP.
+- [x] Publish RC1 prerelease and verify remote refs and downloaded asset hashes.
 - [ ] Physical Android/Termux/client workflow evidence (external gate).
 - [ ] Authorized real account media evidence (external gate).
 - [ ] Eighteen paired measurements, three days and two networks (external gate).
 - [ ] Promote v4 stable only when release gates pass.
+
+## RC2 audit
+
+- [x] Reproduce new boundary failures before fixes.
+- [x] Independent media, engine and dashboard reviews.
+- [x] Full RC2 source suite and browser verification.
+- [ ] Real runtime update/rollback and extracted-artifact checks (release validation report).
+- [ ] Publish RC2 with report and verify anonymous downloaded assets.

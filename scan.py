@@ -210,7 +210,7 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
     config = apply_user_sources(config)
     validate_request(mode, limit)
     config.scan.validate()
-    from utils.scan_control import ScanController
+    from utils.scan_control import ScanController, ScanStopped
 
     started_clock = time.monotonic()
     requested_budget = config.scan.time_budget_seconds
@@ -278,6 +278,7 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
     store, restored = None, None
     context = {"run_id": str(uuid4()), "started_at": _now()}
     interrupted = False
+    collection_timed_out = False
     profile = "web" if mode == "web" else config.testing.mtproto_profile
     refresh_stats = {}
     if config.scan.resume:
@@ -307,6 +308,15 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
 
                 if any(not _matches_mode(proxy, mode) for proxy in candidates):
                     raise ValueError("Favourite proxy does not match the selected mode")
+        except ScanStopped as exc:
+            if exc.reason != "budget":
+                raise KeyboardInterrupt("Collection stopped; previous saved scans are preserved") from exc
+            # Collection is all-or-nothing: unfinished feed results cannot be
+            # promoted to a complete pool or written as a resumable checkpoint.
+            candidates = []
+            interrupted = collection_timed_out = True
+            scan_controller.request_stop("budget")
+            print("Time budget exhausted during source collection; no probes were started.", flush=True)
         except asyncio.CancelledError as exc:
             raise KeyboardInterrupt("Collection stopped; previous saved scans are preserved") from exc
         collected_count = len(candidates)
@@ -316,7 +326,7 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
             requested_count=limit,
             source_reports=_safe_reports(collector.source_reports),
         )
-        if export and config.scan.checkpoint_enabled:
+        if export and config.scan.checkpoint_enabled and not collection_timed_out:
             store = _checkpoint_store(
                 config, mode, "sqlite" if mode == "web" and len(selected) > 20_000 else "json"
             )
@@ -370,7 +380,7 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
             "updated_at": _now(),
             **progress,
             "active": active,
-            "resumable": bool(store),
+            "resumable": bool(store) and progress.get("stage") != "complete",
             "command": getattr(config, "_scan_command", "best10"),
         }
 
@@ -585,8 +595,11 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
         network=config.scan.network,
         resumed=bool(restored),
         stage="stopped" if interrupted else "complete",
-        provisional=bool(staged and interrupted),
-        interrupted_stage=stage_summary.get("stage") if interrupted else None,
+        provisional=bool(interrupted),
+        interrupted_stage=(
+            ("collection" if collection_timed_out else stage_summary.get("stage")) if interrupted else None
+        ),
+        collection_complete=not collection_timed_out,
         prefilter_tested=stage_summary.get("prefilter_tested", 0),
         prefilter_passed=stage_summary.get("prefilter_passed", 0),
         baseline_tested=stage_summary.get("baseline_tested", len(results)),
@@ -596,8 +609,8 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
         state_warnings=warnings,
         command=getattr(config, "_scan_command", "best10"),
         time_budget_seconds=requested_budget,
-        budget_exhausted=bool(generic_summary.get("budget_exhausted", False)),
-        coverage_limited=bool(generic_summary.get("coverage_limited", interrupted)),
+        budget_exhausted=collection_timed_out or bool(generic_summary.get("budget_exhausted", False)),
+        coverage_limited=collection_timed_out or bool(generic_summary.get("coverage_limited", interrupted)),
         stop_reason=scan_controller.reason
         or ("budget" if generic_summary.get("budget_exhausted") else "user" if interrupted else None),
         resume_refresh=refresh_stats,
@@ -618,7 +631,9 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
         else len(selected) - stage_summary.get("unexamined_candidates", len(selected) - len(results))
     )
     summary["examined_candidates"] = examined
-    summary["coverage_percent"] = round(100 * examined / len(selected), 2) if selected else 100.0
+    summary["coverage_percent"] = (
+        0.0 if collection_timed_out else round(100 * examined / len(selected), 2) if selected else 100.0
+    )
     if staged:
         summary["prefilter_failure_counts"] = dict(
             Counter(row["reason"] for row in tester.state["prefilter"].values() if not row["passed"])
@@ -628,6 +643,23 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
 
     summary["sources"] = source_summary(reports)
     context["source_reports"] = reports
+
+    def refresh_recommendations():
+        nonlocal eligible
+        published_at = time.time()
+        eligible = eligible_results(results, output_cfg, now=published_at)
+        summary.update(
+            evidence_as_of=published_at,
+            eligible=len(eligible),
+            displayed=min(10, len(eligible)),
+            expired_results=sum(not result.evidence_fresh(now=published_at) for result in results),
+            strict_verified=len(eligible) if mode != "web" else 0,
+        )
+        if mode != "web":
+            summary["verified"] = len(eligible)
+        return published_at
+
+    refresh_recommendations()
     update_progress(
         {
             "stage": summary["stage"],
@@ -657,17 +689,6 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
                         exporter._write("completed_snapshot.json", previous)
                 except (OSError, ValueError, AttributeError, UnicodeError):
                     pass
-        exporter.export_all(results)
-        if 10 not in output_cfg.top_sizes:
-            exporter.export_top_n(eligible, 10)
-        readable = exporter.export_best_n_readable(results, n=10)
-        if interrupted:
-            exporter._write(
-                "best10_links.txt",
-                "Stopped scan / partial results\n"
-                f"Tested {len(results)} of {len(selected)}; skipped {summary['skipped']}.\n\n"
-                + readable.read_text(encoding="utf-8"),
-            )
         if config.scan.history_enabled:
             try:
                 history = HistoryStore(Path(config.output.folder) / ".state", config.scan.network, mode)
@@ -705,12 +726,42 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
         exporter._write(
             "observations.json", json.dumps(observations, ensure_ascii=False, indent=2, allow_nan=False)
         )
+
+        def export_recommendations():
+            exporter.export_all(eligible)
+            if 10 not in output_cfg.top_sizes:
+                exporter.export_top_n(eligible, 10)
+            readable = exporter.export_best_n_readable(eligible, n=10)
+            if interrupted:
+                exporter._write(
+                    "best10_links.txt",
+                    "Stopped scan / partial results\n"
+                    f"Tested {len(results)} of {len(selected)}; skipped {summary['skipped']}.\n\n"
+                    + readable.read_text(encoding="utf-8"),
+                )
+
+        # Bulk observations/history I/O happens before the publication boundary.
+        # Export writes can also cross a TTL; remove those entries and rewrite
+        # once rather than retry indefinitely on a slow disk. Snapshot rows are
+        # frozen at one instant and readers recheck their explicit expiry.
+        refresh_recommendations()
+        exported_keys = {result.proxy.key() for result in eligible}
+        export_recommendations()
+        published_at = refresh_recommendations()
+        if exported_keys != {result.proxy.key() for result in eligible}:
+            export_recommendations()
+            published_at = refresh_recommendations()
+        progress["qualified"] = len(eligible)
+        try:
+            write_json_atomic(folder / "progress.json", progress_payload(active=False))
+        except OSError:
+            pass  # The earlier progress write already reports unavailable state.
         snapshot = {
             "version": 1,
             "mode": mode,
             "summary": summary,
             "source_reports": reports,
-            "rows": [r.to_dict() for r in eligible],
+            "rows": [r.to_dict(now=published_at) for r in eligible],
         }
         encoded = json.dumps(snapshot, ensure_ascii=False, indent=2, allow_nan=False)
         exporter._write("snapshot.json", encoded)
@@ -724,4 +775,7 @@ def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: boo
                         f"Could not mark checkpoint complete ({type(exc).__name__}). Current exports are saved.",
                         flush=True,
                     )
-    return ScanOutcome(results, eligible, eligible[:10], summary, reports, folder)
+    # Publication metadata intentionally describes evidence_as_of. Live callers
+    # must not receive a now-expired recommendation after final metadata I/O.
+    current = eligible_results(eligible, output_cfg)
+    return ScanOutcome(results, current, current[:10], summary, reports, folder)

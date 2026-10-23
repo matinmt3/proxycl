@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -20,9 +22,14 @@ MAX_SOURCES = 256
 
 
 def canonical_mode(mode):
-    if mode not in MODES:
+    if not isinstance(mode, str) or mode not in MODES:
         raise ValueError("Unknown source family")
     return "mtproto" if mode == "telegram" else mode
+
+
+def _control_identity(source, mode):
+    """A toggle addresses a family; collector provenance keeps its existing feed ID."""
+    return hashlib.sha256((canonical_mode(mode) + "\n" + source_identity(source)).encode()).hexdigest()
 
 
 def data_dir(config):
@@ -32,6 +39,14 @@ def data_dir(config):
         if override
         else Path(__file__).resolve().parent.parent / ".revmamad" / "user-data"
     )
+
+
+@contextmanager
+def personal_data_write(config, *, operation):
+    """Protect scans and shared profiles, including configurations with other outputs."""
+    with OutputRootLock(config.output.folder, operation=operation):
+        with OutputRootLock(data_dir(config), operation=operation):
+            yield
 
 
 def read_document(path, empty):
@@ -93,15 +108,20 @@ def _source(row):
         if url or not isinstance(row["manual"], str) or len(row["manual"].encode("utf-8")) > 1024 * 1024:
             raise ValueError("Invalid manual source contents")
     else:
-        if not isinstance(url, str) or len(url) > 2048 or any(ord(c) < 33 for c in url):
+        if not isinstance(url, str) or len(url) > 2048 or "\\" in url or any(ord(c) < 33 for c in url):
             raise ValueError("Invalid feed URL")
-        parts = urlsplit(url)
+        try:
+            parts = urlsplit(url)
+            port = parts.port  # urlsplit alone accepts invalid and out-of-range ports.
+        except ValueError as exc:
+            raise ValueError("Invalid feed URL") from exc
         if (
             parts.scheme not in {"http", "https"}
             or not parts.hostname
             or parts.username
             or parts.password
             or parts.fragment
+            or port == 0
         ):
             raise ValueError("Use a public HTTP(S) feed URL without embedded credentials or fragments")
     protocol = row.get("protocol", "http")
@@ -160,7 +180,7 @@ class SourceStore:
 
     def import_document(self, document):
         validated = _document(document)
-        with OutputRootLock(self.config.output.folder, operation="sources"):
+        with personal_data_write(self.config, operation="sources"):
             if self.path.exists():
                 atomic_document(self.path.with_suffix(".backup.json"), self.export_document())
             atomic_document(self.path, validated)
@@ -188,7 +208,7 @@ class SourceStore:
 
     def _add(self, row):
         row = _source(row)
-        with OutputRootLock(self.config.output.folder, operation="sources"):
+        with personal_data_write(self.config, operation="sources"):
             document = self.export_document()
             if row in document["sources"]:
                 return False
@@ -203,9 +223,9 @@ class SourceStore:
             or not re.fullmatch(r"[0-9a-f]{64}", identity)
         ):
             raise ValueError("Invalid source identity or enabled state")
-        if identity not in {row["id"] for row in self.list()}:
-            raise ValueError("Unknown source identity")
-        with OutputRootLock(self.config.output.folder, operation="sources"):
+        with personal_data_write(self.config, operation="sources"):
+            if identity not in {row["id"] for row in self.list()}:
+                raise ValueError("Unknown source identity")
             document = self.export_document()
             document["overrides"][identity] = enabled
             atomic_document(self.path, _document(document))
@@ -220,7 +240,7 @@ class SourceStore:
             for source in getattr(config, MODES[family]):
                 result.append(
                     {
-                        "id": source_identity(source),
+                        "id": _control_identity(source, family),
                         "mode": family,
                         "name": _safe_name(source),
                         "enabled": source.enabled,
@@ -246,8 +266,6 @@ def apply_user_sources(config):
         cls = WebSourceConfig if family == "web" else SourceConfig
         url = row["url"]
         if "manual" in row:
-            import hashlib
-
             identity = hashlib.sha256((family + "\n" + row["manual"]).encode()).hexdigest()
             url = "manual://" + identity
         kwargs = {key: row[key] for key in ("name", "type", "enabled")}
@@ -258,9 +276,12 @@ def apply_user_sources(config):
         if "manual" in row:
             source._manual_text = row["manual"]
         getattr(updated, MODES[family]).append(source)
-    for field in set(MODES.values()):
-        for source in getattr(updated, field):
-            identity = source_identity(source)
+    for family in ("mtproto", "webproxy", "web"):
+        for source in getattr(updated, MODES[family]):
+            identity = _control_identity(source, family)
+            # Read earlier global overrides, but prefer a new explicit family choice.
+            if identity not in document["overrides"]:
+                identity = source_identity(source)
             if identity in document["overrides"]:
                 source.enabled = document["overrides"][identity]
     return updated

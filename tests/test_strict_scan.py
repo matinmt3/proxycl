@@ -36,7 +36,15 @@ def test_strict_scan_does_not_promote_quick_probe_and_keeps_actual_evidence(conf
     assert outcome.summary["interrupted"] is True
     assert [r.proxy.server for r in outcome.top] == ["reliable.example"]
     observed = json.loads((outcome.folder / "observations.json").read_text())
-    assert observed["summary"] == outcome.summary
+    # Raw evidence is persisted before final recommendation publication. The
+    # latter must recheck freshness rather than renew the observation timestamp.
+    assert observed["summary"]["evidence_as_of"] <= outcome.summary["evidence_as_of"]
+    assert {key: value for key, value in observed["summary"].items() if key != "evidence_as_of"} == {
+        key: value for key, value in outcome.summary.items() if key != "evidence_as_of"
+    }
+    published = json.loads((outcome.folder / "snapshot.json").read_text())
+    assert published["summary"] == outcome.summary
+    assert published["rows"][0]["evidence_expires_at"] > outcome.summary["evidence_as_of"]
     assert [row["server"] for row in observed["rows"]] == [r.proxy.server for r in outcome.results]
     assert sorted(len(row["samples"]) for row in observed["rows"]) == [1, 3]
     assert "auth_key" not in (outcome.folder / "observations.json").read_text()

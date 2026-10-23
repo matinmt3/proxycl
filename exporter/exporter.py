@@ -19,21 +19,23 @@ from utils.models import Proxy, ProxyResult
 logger = logging.getLogger("mtselector.exporter")
 
 
-def eligible_results(results: List[ProxyResult], output_cfg: OutputConfig) -> List[ProxyResult]:
+def eligible_results(
+    results: List[ProxyResult], output_cfg: OutputConfig, *, now: float | None = None
+) -> List[ProxyResult]:
     return [
         r
         for r in results
         if (
             not isinstance(r.proxy, (Proxy, TelegramWebProxy))
             or (
-                r.strict_eligible
+                r.quality_eligible
                 and r.strict_successes >= output_cfg.mtproto_min_successes
                 and r.strict_successes / max(1, r.attempts) >= output_cfg.mtproto_min_success_rate
                 and r.telegram_p95_ms <= output_cfg.mtproto_max_ping_p95_ms
                 and r.telegram_jitter_ms <= output_cfg.mtproto_max_ping_jitter_ms
             )
         )
-        and r.evidence_fresh(max_age_seconds=output_cfg.proof_max_age_minutes * 60)
+        and r.evidence_fresh(now=now, max_age_seconds=output_cfg.proof_max_age_minutes * 60)
         and r.successes > 0
         and math.isfinite(r.score)
         and r.score >= output_cfg.min_score
@@ -95,8 +97,13 @@ class Exporter:
             "score",
             "report_schema",
             "ranking_policy",
+            "evidence_type",
             "evidence_status",
+            "oldest_observed_at",
+            "latest_observed_at",
+            "proof_max_age_seconds",
             "evidence_expires_at",
+            "result_status",
             "provisional",
             "within_session_jitter_ms",
             "interconnection_drift_ms",
@@ -136,7 +143,9 @@ class Exporter:
     def export_top_n(self, results: List[ProxyResult], n: int) -> Path:
         if n < 1:
             raise ValueError("Top count must be positive")
-        data = [r.to_dict() for r in self._filtered(results)[:n]]
+        from benchmark.scorer import rank
+
+        data = [r.to_dict() for r in rank(self._filtered(results))[:n]]
         return self._write(f"top{n}.json", json.dumps(data, indent=2, allow_nan=False))
 
     def export_best_n_readable(
@@ -159,12 +168,15 @@ class Exporter:
             "=" * 60,
             "",
         ]
+        if any(result.provisional for result in top):
+            lines.extend(["PROVISIONAL results: the scan stopped before completing its full test plan.", ""])
         for i, r in enumerate(top, 1):
             lines.append(
                 f"#{i}  {r.proxy.server}:{r.proxy.port}\n"
                 f"    Telegram RTT p95: {r.telegram_p95_ms:.0f} ms | Median: {r.telegram_median_ms:.0f} ms | Jitter: {r.telegram_jitter_ms:.0f} ms\n"
                 f"    Sessions: {r.strict_successes}/{r.attempts} | Matched pings: {r.ping_count} | Success: {r.success_rate * 100:.0f}% | Score: {r.score * 100:.1f}%\n"
                 f"    Setup: {r.avg_latency_ms:.0f} ms\n"
+                f"    Result: {'PROVISIONAL' if r.provisional else 'complete'}\n"
                 f"    Policy: {r.ranking_policy} | Evidence: {r.freshness_status} | Expires (UTC epoch): {r.evidence_expires_at:.0f}\n"
                 f"    Link:  {self.connection_link(r)}\n"
             )

@@ -32,7 +32,7 @@ def test_real_offline_runtime_and_loopback_selftest(config, monkeypatch, capsys)
     monkeypatch.setenv("TERMUX_VERSION", "fixture")
     assert selftest.run_selftest(config) == 0
     report = read_report(config)
-    assert report["version"] == "4.0.0-rc.1"
+    assert report["version"] == "4.0.0-rc.2"
     assert report["all_passed"] is True
     assert report["termux"] is True
     assert report["scope"] == "offline runtime/loopback only"

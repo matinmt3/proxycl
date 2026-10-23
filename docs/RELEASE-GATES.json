@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "version": "4.0.0-rc.1",
+  "version": "4.0.0-rc.2",
   "channel": "prerelease",
   "stable_eligible": false,
   "default_ranking_policy": "v1",

@@ -10,6 +10,7 @@ import re
 import statistics
 import sys
 import time
+import warnings
 from collections.abc import Callable, Sequence
 
 from media_test.client import AuthSnapshot, Credentials, disconnect_client, get_document, make_client
@@ -62,15 +63,25 @@ def _fresh(result, settings):
         raise EvidenceExpired("expired_evidence")
 
 
-def _credentials():
+def _hidden_input(prompt):
+    """Refuse getpass's echoing fallback when a terminal cannot disable echo."""
     if not sys.stdin.isatty():
         raise RuntimeError("Media account login is available only in an interactive terminal")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", getpass.GetPassWarning)
+        try:
+            return getpass.getpass(prompt)
+        except getpass.GetPassWarning:
+            raise RuntimeError("Secure hidden terminal input is unavailable") from None
+
+
+def _credentials():
     try:
-        api_id = int(getpass.getpass("Telegram API ID (hidden): "))
+        api_id = int(_hidden_input("Telegram API ID (hidden): "))
     except ValueError:
         raise ValueError("Invalid API ID") from None
-    api_hash = getpass.getpass("Telegram API hash (hidden): ").strip()
-    phone = getpass.getpass("Phone with country code (hidden): ").strip()
+    api_hash = _hidden_input("Telegram API hash (hidden): ").strip()
+    phone = _hidden_input("Phone with country code (hidden): ").strip()
     if not 0 < api_id < 2**31 or not re.fullmatch(r"[0-9a-fA-F]{32}", api_hash):
         raise ValueError("Invalid Telegram application credentials")
     if not re.fullmatch(r"\+[1-9][0-9]{5,14}", phone):
@@ -169,7 +180,9 @@ async def measure_round(client, document, settings, budget, deadline) -> dict:
         elapsed = max(time.perf_counter() - start, 1e-9)
         try:
             await asyncio.wait_for(stream.close(), 2)
-        except (Exception, asyncio.CancelledError):
+        except asyncio.CancelledError:
+            status = "cancelled"
+        except Exception:
             pass
     return {
         "status": status,
@@ -184,6 +197,10 @@ async def measure_round(client, document, settings, budget, deadline) -> dict:
 
 
 def _rank(rows):
+    now = time.time()
+    for row in rows:
+        if row["status"] == "complete" and row["proof_expires_at"] <= now:
+            row["status"] = "expired_evidence"
     eligible = [row for row in rows if row["status"] == "complete" and row["completed_rounds"] == 2]
     return [
         row["candidate_id"]
@@ -213,7 +230,7 @@ async def run_media_test_async(
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", network_profile):
         raise ValueError("Invalid network profile")
     account = _account or _credentials()
-    prompt = _prompt or getpass.getpass
+    prompt = _prompt or _hidden_input
     factory = _client_factory or make_client
     budget = TransferBudget(settings.budget_bytes)
     report = {
@@ -268,7 +285,10 @@ async def run_media_test_async(
             row = {
                 "candidate_id": hashlib.sha256(result.proxy.key().encode()).hexdigest(),
                 "network_profile": network_profile,
-                "proof_expires_at": result.evidence_expires_at,
+                "proof_expires_at": min(
+                    result.evidence_expires_at,
+                    min(sample.timestamp for sample in result.samples) + settings.proof_max_age_seconds,
+                ),
                 "ranking_policy": result.ranking_policy,
                 "status": "partial",
                 "rounds": [],
@@ -345,6 +365,7 @@ async def run_media_test_async(
         # A cancelled sign-in may have reached Telegram before cancellation.
         # Attempt logout whenever a key exists, even if no reply confirmed it.
         if authenticated or (client is not None and AuthSnapshot.capture(client) is not None):
+            report["logout_status"] = "not_confirmed"
             try:
                 # Reconnect only through the last pinned route. No special
                 # direct cleanup connection is permitted, even at the cap.
@@ -353,11 +374,22 @@ async def run_media_test_async(
                     await asyncio.wait_for(client.connect(), 5)
                 if await asyncio.wait_for(client.log_out(), 5):
                     report["logout_status"] = "confirmed"
-            except (Exception, asyncio.CancelledError):
+            except asyncio.CancelledError:
                 report["logout_status"] = "not_confirmed"
-        await disconnect_client(client)
+                report["status"] = "cancelled"
+            except Exception:
+                report["logout_status"] = "not_confirmed"
+        try:
+            await disconnect_client(client)
+        except asyncio.CancelledError:
+            # Cleanup is outside the measurement try/except. A final Ctrl+C
+            # must still return the redacted report and completed rankings.
+            report["status"] = "cancelled"
         snapshot, account = None, None
         report["observed_bytes"] = budget.consumed
+        # Cancellation during connection teardown can skip the ordinary loop
+        # exit; completed measurements must still remain available for ranking.
+        report["ranked_candidate_ids"] = _rank(report["results"])
     return safe_report(report)
 
 

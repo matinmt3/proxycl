@@ -7,6 +7,7 @@ import math
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 
 from media_test.models import MEDIA_POLICY, REPORT_SCHEMA
@@ -84,12 +85,25 @@ def safe_report(document: dict) -> dict:
                 },
             }
         )
-    ids = {row["candidate_id"] for row in rows}
+    # Preserve measurements as historical evidence, but never present a stale
+    # protocol proof as a currently ranked recommendation when loading a file.
+    now = time.time()
+    for row in rows:
+        if row["status"] == "complete" and (
+            row["proof_expires_at"] is None or row["proof_expires_at"] <= now
+        ):
+            row["status"] = "expired_evidence"
+    ids = {
+        row["candidate_id"] for row in rows if row["status"] == "complete" and row["completed_rounds"] == 2
+    }
+    status = document.get("status") if document.get("status") in STATUSES else "internal_error"
+    if status == "complete" and any(row["status"] == "expired_evidence" for row in rows):
+        status = "partial" if ids else "expired_evidence"
     return {
         "schema_version": REPORT_SCHEMA,
         "policy": MEDIA_POLICY,
         "experimental": True,
-        "status": document.get("status") if document.get("status") in STATUSES else "internal_error",
+        "status": status,
         "created_at": _number(document.get("created_at")),
         "network_profile": _network(document.get("network_profile")),
         **{

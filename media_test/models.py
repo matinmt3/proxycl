@@ -80,6 +80,8 @@ def parse_public_message_link(link: str) -> tuple[str, int]:
     ):
         raise ValueError("Expected https://t.me/PUBLIC_CHANNEL/MESSAGE_NUMBER")
     channel, message_id = parsed.path.strip("/").split("/")
+    if int(message_id) > 2**31 - 1:
+        raise ValueError("Telegram message number exceeds the protocol range")
     if channel.lower() in {"joinchat", "proxy", "socks", "webproxy", "share", "login"}:
         raise ValueError("Expected a public channel message")
     return channel, int(message_id)

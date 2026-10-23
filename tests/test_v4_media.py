@@ -8,6 +8,7 @@ import socket
 import ssl
 import struct
 import time
+import warnings
 from collections import defaultdict
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -377,7 +378,10 @@ def test_report_allowlist_and_atomic_roundtrip(tmp_path):
     assert read_report(path) is None
 
 
-async def test_orchestrator_sequential_fresh_clients_logout_and_no_metadata(monkeypatch):
+@pytest.mark.parametrize("cancel_final_cleanup", [False, True])
+async def test_orchestrator_sequential_fresh_clients_logout_and_no_metadata(
+    monkeypatch, cancel_final_cleanup
+):
     pytest.importorskip("telethon")
     from telethon.crypto import AuthKey
     from telethon.sessions import MemorySession
@@ -409,6 +413,8 @@ async def test_orchestrator_sequential_fresh_clients_logout_and_no_metadata(monk
 
         async def disconnect(self):
             active.discard(id(self))
+            if cancel_final_cleanup and self.logged_out:
+                raise asyncio.CancelledError()
 
         async def log_out(self):
             self.logged_out = True
@@ -430,10 +436,244 @@ async def test_orchestrator_sequential_fresh_clients_logout_and_no_metadata(monk
         _prompt=lambda prompt: "12345",
     )
     assert maximum == 1 and not active
-    assert report["status"] == "complete" and report["logout_status"] == "confirmed"
+    assert report["status"] == ("cancelled" if cancel_final_cleanup else "complete")
+    assert report["logout_status"] == "confirmed"
     assert len(report["ranked_candidate_ids"]) == 2
     assert len(made) == 4 and made[-1].logged_out
     assert all(client.snapshot is not None for client in made[1:])
     text = json.dumps(report)
     assert "123456789" not in text and "example" not in text and "12345" not in text
     assert all(row["completed_rounds"] == 2 for row in report["results"])
+
+
+@pytest.mark.parametrize("failure", [None, RuntimeError("private export error"), asyncio.CancelledError()])
+async def test_exported_media_sender_uses_pinned_route_no_updates_and_closes_on_failure(monkeypatch, failure):
+    pytest.importorskip("telethon")
+    from telethon import functions
+    from telethon.network import mtprotosender
+
+    from media_test.client import Credentials, make_client
+
+    opened, senders, writers = [], [], []
+
+    async def opener(host, port):
+        opened.append((host, port))
+        writer = Writer()
+        writers.append(writer)
+        return asyncio.StreamReader(), writer
+
+    class Sender:
+        def __init__(self, *args, **kwargs):
+            self.options, self.closed, self.request = kwargs, False, None
+            senders.append(self)
+
+        async def connect(self, connection):
+            self._connection = connection
+            await connection.connect()
+
+        async def send(self, request):
+            self.request = request
+
+        async def disconnect(self):
+            self.closed = True
+            await self._connection.disconnect()
+
+    monkeypatch.setattr(asyncio, "open_connection", opener)
+    client = make_client(qualified().proxy, TransferBudget(1000000), Credentials(123, "a" * 32, "+123456789"))
+    client._get_dc = AsyncMock(return_value=SimpleNamespace(ip_address="149.154.167.50", port=443, id=4))
+    client._call = AsyncMock(side_effect=failure, return_value=SimpleNamespace(id=17, bytes=b"private auth"))
+    monkeypatch.setattr(mtprotosender, "MTProtoSender", Sender)
+    original_query = client._init_request.query
+    if failure is not None:
+        with pytest.raises(type(failure)):
+            await client._create_exported_sender(4)
+        assert senders[0].closed and writers[0].closed
+    else:
+        sender = await client._create_exported_sender(4)
+        assert isinstance(sender.request, functions.InvokeWithLayerRequest)
+        assert isinstance(sender.request.query, functions.InvokeWithoutUpdatesRequest)
+        assert isinstance(sender.request.query.query.query, functions.auth.ImportAuthorizationRequest)
+        assert client._init_request.query is original_query
+        await sender.disconnect()
+    assert opened == [("proxy.example", 443)]
+    assert senders[0].options["auto_reconnect"] is False and senders[0].options["retries"] == 1
+
+
+async def test_disconnect_cancellation_closes_socket_and_remains_cancellation():
+    from media_test.client import disconnect_client
+
+    entered = asyncio.Event()
+
+    async def disconnect():
+        entered.set()
+        await asyncio.Event().wait()
+
+    connection = SimpleNamespace(disconnect=AsyncMock())
+    client = SimpleNamespace(disconnect=disconnect, _sender=SimpleNamespace(_connection=connection))
+    task = asyncio.create_task(disconnect_client(client))
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    connection.disconnect.assert_awaited_once()
+
+
+async def test_cancel_during_iterator_close_is_not_complete():
+    class ClosingStream(Stream):
+        async def close(self):
+            raise asyncio.CancelledError()
+
+    stream = ClosingStream([b"x" * CHUNK_BYTES])
+    sample = await measure_round(
+        SimpleNamespace(iter_download=lambda *args, **kwargs: stream),
+        SimpleNamespace(size=CHUNK_BYTES),
+        MediaSettings(round_bytes=CHUNK_BYTES),
+        TransferBudget(10000000),
+        time.perf_counter() + 5,
+    )
+    assert sample["status"] == "cancelled" and sample["bytes"] == CHUNK_BYTES
+
+
+@pytest.mark.parametrize("during_auth", [False, True])
+async def test_cancellation_retains_completed_results_and_uncertain_logout_is_reported(
+    monkeypatch, during_auth
+):
+    pytest.importorskip("telethon")
+    from telethon.crypto import AuthKey
+    from telethon.sessions import MemorySession
+
+    from media_test import runner
+    from media_test.client import Credentials
+
+    made = []
+
+    class Client:
+        def __init__(self, proxy, budget, account, snapshot=None):
+            self.session = MemorySession()
+            self.session.set_dc(2, "dc.example", 443)
+            self.session.auth_key = AuthKey(b"a" * 256)
+            self.measurement, self.cancelled = snapshot is not None, False
+            made.append(self)
+
+        async def connect(self):
+            pass
+
+        async def send_code_request(self, phone):
+            pass
+
+        async def sign_in(self, phone=None, code=None, password=None):
+            if during_auth:
+                raise asyncio.CancelledError()
+
+        async def disconnect(self):
+            if self.measurement and not self.cancelled:
+                self.cancelled = True
+                raise asyncio.CancelledError()
+
+        async def log_out(self):
+            return False
+
+        def iter_download(self, document, **kwargs):
+            return Stream([b"x" * CHUNK_BYTES])
+
+    monkeypatch.setattr(
+        runner, "get_document", AsyncMock(return_value=SimpleNamespace(id=1234, size=CHUNK_BYTES))
+    )
+    report = await run_media_test_async(
+        [qualified(), qualified("unused.example")],
+        network_profile="test",
+        message_link="https://t.me/example/9",
+        settings=MediaSettings(round_bytes=CHUNK_BYTES),
+        _account=Credentials(123, "a" * 32, "+123456789"),
+        _client_factory=Client,
+        _prompt=lambda text: "12345",
+    )
+    assert report["status"] == "cancelled" and report["logout_status"] == "not_confirmed"
+    if during_auth:
+        assert not report["results"] and len(made) == 1
+    else:
+        assert len(report["results"]) == len(report["ranked_candidate_ids"]) == 1
+        assert report["results"][0]["completed_rounds"] == 2
+        assert len(made) == 2
+
+
+def test_hidden_input_refuses_getpass_echo_fallback(monkeypatch):
+    import getpass
+
+    from media_test import runner
+
+    reached_fallback = []
+
+    def fallback(prompt):
+        warnings.warn("Password input may be echoed", getpass.GetPassWarning)
+        reached_fallback.append(True)
+        return "would expose credential"
+
+    monkeypatch.setattr(runner.sys, "stdin", SimpleNamespace(isatty=lambda: True))
+    monkeypatch.setattr(getpass, "getpass", fallback)
+    with pytest.raises(RuntimeError, match="Secure hidden"):
+        runner._hidden_input("credential")
+    assert not reached_fallback
+
+
+def test_noninteractive_credentials_fail_before_any_prompt(monkeypatch):
+    from media_test import runner
+
+    monkeypatch.setattr(runner.sys, "stdin", SimpleNamespace(isatty=lambda: False))
+    monkeypatch.setattr(runner.getpass, "getpass", lambda prompt: pytest.fail("must not prompt"))
+    with pytest.raises(RuntimeError, match="interactive terminal"):
+        runner._credentials()
+
+
+def test_message_number_outside_tl_int_range_fails_before_login():
+    assert parse_public_message_link("https://t.me/example/2147483647")[1] == 2147483647
+    with pytest.raises(ValueError, match="protocol range"):
+        parse_public_message_link("https://t.me/example/2147483648")
+
+
+def test_saved_media_ranking_expires_but_measurements_are_retained(tmp_path, monkeypatch):
+    from media_test import report as reports
+
+    candidate_id = "a" * 64
+    document = {
+        "schema_version": 1,
+        "status": "complete",
+        "ranked_candidate_ids": [candidate_id],
+        "results": [
+            {
+                "candidate_id": candidate_id,
+                "status": "complete",
+                "proof_expires_at": 1010,
+                "completed_rounds": 2,
+                "median_mbps": 3,
+                "rounds": [{"status": "complete", "bytes": 512}],
+            }
+        ],
+    }
+    monkeypatch.setattr(reports.time, "time", lambda: 1000)
+    path = tmp_path / "media-report.json"
+    write_report(path, document)
+    assert read_report(path)["ranked_candidate_ids"] == [candidate_id]
+    monkeypatch.setattr(reports.time, "time", lambda: 1011)
+    result = read_report(path)
+    assert result["status"] == "expired_evidence" and not result["ranked_candidate_ids"]
+    assert result["results"][0]["rounds"][0]["bytes"] == 512
+
+
+def test_evidence_that_expires_during_other_candidates_is_not_ranked(monkeypatch):
+    from media_test import runner
+
+    monkeypatch.setattr(runner.time, "time", lambda: 1011)
+    rows = [
+        {
+            "candidate_id": "a" * 64,
+            "status": "complete",
+            "proof_expires_at": 1010,
+            "completed_rounds": 2,
+            "stalls": 0,
+            "median_mbps": 5,
+            "median_ttfb_ms": 10,
+        }
+    ]
+    assert not runner._rank(rows)
+    assert rows[0]["status"] == "expired_evidence"

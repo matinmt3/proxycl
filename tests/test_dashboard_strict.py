@@ -10,12 +10,16 @@ from dashboard import data
 
 
 def strict_row():
+    observed = time.time() - 5
     return {
         "server": "session.example",
         "port": 443,
         "secret": "00112233445566778899aabbccddeeff",
         "source": "fixture",
-        "evidence_expires_at": time.time() + 3600,
+        "oldest_observed_at": observed,
+        "latest_observed_at": observed + 1,
+        "proof_max_age_seconds": 3600,
+        "evidence_expires_at": observed + 3600,
         "tg_link": "tg://proxy?server=session.example&port=443&secret=00112233445566778899aabbccddeeff",
         "web_link": "https://t.me/proxy?server=session.example&port=443&secret=00112233445566778899aabbccddeeff",
         "score": 0.8,

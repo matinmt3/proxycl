@@ -336,7 +336,13 @@ def test_actions_are_allowlisted_endpoint_matched_and_mode_specific(tmp_path):
         {"server": "safe.example", "port": 80, "protocol": "http", "uri": "http://safe.example:80"},
     ]
     for row in rows:
-        row["evidence_expires_at"] = time.time() + 3600
+        observed = time.time() - 5
+        row.update(
+            oldest_observed_at=observed,
+            latest_observed_at=observed + 1,
+            proof_max_age_seconds=3600,
+            evidence_expires_at=observed + 3600,
+        )
     write_snapshot(tmp_path, "web", rows)
     safe = data.snapshot(tmp_path, "web")["rows"]
     assert all("tg_link" not in row for row in safe)

@@ -196,14 +196,17 @@ def update(root: Path, *, rollback=False, check=False, ref=None, output_folder=N
     root = root.resolve()
     if Path(_git(root, "rev-parse", "--show-toplevel")).resolve() != root:
         raise UpdateError("Run updates from the repository root installation")
-    with OutputRootLock(output_folder or root / "output", operation="update"):
+    managed = _managed(root)
+    # The output lock coordinates scanners; installation ownership also prevents
+    # two configurations with different output paths from updating the same code.
+    with (
+        OutputRootLock(managed / "updates", operation="update"),
+        OutputRootLock(output_folder or root / "output", operation="update"),
+    ):
         _clean(root)
-        managed = _managed(root)
         record_path = managed / "updates" / "last.json"
         pointer_path = managed / "active-runtime.json"
         before = _git(root, "rev-parse", "HEAD")
-        pointer = _read(pointer_path)
-        runtime_python(root, pointer)
         old_record = _read(record_path)
         if rollback:
             if not _record_valid(old_record) or old_record["phase"] not in {"prepared", "active"}:
@@ -224,6 +227,10 @@ def update(root: Path, *, rollback=False, check=False, ref=None, output_folder=N
             old_record["phase"] = "rolled_back"
             _atomic(record_path, old_record)
             return {"status": "rolled_back", "commit": old_record["before"], "user_data_preserved": True}
+        # Recovery only needs the recorded previous runtime. Requiring the
+        # failed candidate or its pointer to work would make rollback unusable.
+        pointer = _read(pointer_path)
+        runtime_python(root, pointer)
         if old_record and old_record.get("phase") == "prepared":
             raise UpdateError("An interrupted update needs `update --rollback` before another update")
         branch = _git(root, "symbolic-ref", "--quiet", "--short", "HEAD")

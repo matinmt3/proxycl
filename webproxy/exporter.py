@@ -13,7 +13,7 @@ from utils.models import ProxyResult
 
 class WebExporter(Exporter):
     def export_txt(self, results: list[ProxyResult], filename: str = "proxy.txt") -> Path:
-        lines = [f"{r.proxy.uri()}  # score={r.score:.3f}" for r in results]
+        lines = [f"{r.proxy.uri()}  # score={r.score:.3f}" for r in rank(self._filtered(results))]
         return self._write(filename, "\n".join(lines) + ("\n" if lines else ""))
 
     def export_csv(self, results: list[ProxyResult], filename: str = "proxy.csv") -> Path:
@@ -24,6 +24,16 @@ class WebExporter(Exporter):
             "source",
             "uri",
             "score",
+            "report_schema",
+            "ranking_policy",
+            "evidence_type",
+            "evidence_status",
+            "oldest_observed_at",
+            "latest_observed_at",
+            "proof_max_age_seconds",
+            "evidence_expires_at",
+            "result_status",
+            "provisional",
             "success_rate",
             "avg_latency_ms",
             "median_latency_ms",
@@ -35,13 +45,13 @@ class WebExporter(Exporter):
         with StringIO(newline="") as stream:
             writer = csv.DictWriter(stream, fieldnames=fields)
             writer.writeheader()
-            for result in results:
+            for result in rank(self._filtered(results)):
                 row = result.to_dict()
                 writer.writerow({key: row.get(key) for key in fields})
             return self._write(filename, stream.getvalue())
 
     def export_proxy_links(self, results: list[ProxyResult], filename: str = "proxy_links.txt") -> Path:
-        lines = [result.proxy.uri() for result in results]
+        lines = [result.proxy.uri() for result in rank(self._filtered(results))]
         return self._write(filename, "\n".join(lines) + ("\n" if lines else ""))
 
     def export_top_n(self, results: list[ProxyResult], n: int) -> Path:
@@ -59,12 +69,16 @@ class WebExporter(Exporter):
             "=" * 60,
             "",
         ]
+        if any(result.provisional for result in top):
+            lines.extend(["PROVISIONAL results: the scan stopped before completing its full test plan.", ""])
         for index, result in enumerate(top, 1):
             lines.append(
                 f"#{index}  {result.proxy.uri()}\n"
                 f"    Latency: {result.avg_latency_ms:.0f} ms | "
                 f"Success: {result.success_rate * 100:.0f}% | "
                 f"Score: {result.score * 100:.1f}%\n"
+                f"    Result: {'PROVISIONAL' if result.provisional else 'complete'}\n"
+                f"    Policy: {result.ranking_policy} | Evidence: {result.freshness_status} | Expires (UTC epoch): {result.evidence_expires_at:.0f}\n"
             )
         if not top:
             lines.append("No verified web proxies in the last completed scan.")

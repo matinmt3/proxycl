@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlencode
 
 from telegram_webproxy.models import TelegramWebProxy
+from utils.evidence import _finite, saved_evidence_status
 
 if TYPE_CHECKING:
     from webproxy.models import WebProxy
@@ -238,7 +239,7 @@ class ProxyResult:
     @property
     def oldest_observed_at(self) -> Optional[float]:
         values = [s.timestamp for s in self.samples]
-        if not values or any(type(v) not in (int, float) or not math.isfinite(v) or v <= 0 for v in values):
+        if not values or any(not _finite(v) or v <= 0 for v in values):
             return None
         return min(values)
 
@@ -249,31 +250,31 @@ class ProxyResult:
     @property
     def evidence_expires_at(self) -> Optional[float]:
         oldest = self.oldest_observed_at
-        return oldest + self.proof_max_age_seconds if oldest is not None else None
+        return (
+            oldest + self.proof_max_age_seconds
+            if oldest is not None and _finite(self.proof_max_age_seconds)
+            else None
+        )
+
+    def _evidence_times(self) -> dict:
+        return {
+            "oldest_observed_at": self.oldest_observed_at,
+            "latest_observed_at": self.latest_observed_at,
+            "proof_max_age_seconds": self.proof_max_age_seconds,
+            "evidence_expires_at": self.evidence_expires_at,
+        }
 
     def evidence_fresh(self, *, now: float | None = None, max_age_seconds: float | None = None) -> bool:
         """All finished evidence must be recent; a new sample cannot renew old proof."""
-        now = time.time() if now is None else now
-        ttl = self.proof_max_age_seconds
-        if max_age_seconds is not None:
-            ttl = min(ttl, max_age_seconds)
-        oldest, newest = self.oldest_observed_at, self.latest_observed_at
         return (
-            type(ttl) in (int, float)
-            and math.isfinite(ttl)
-            and ttl > 0
-            and oldest is not None
-            and newest <= now + 60
-            and now < oldest + ttl
+            saved_evidence_status(self._evidence_times(), now=now, max_age_seconds=max_age_seconds) == "fresh"
         )
 
     @property
     def freshness_status(self) -> str:
         if not self.samples:
             return "missing"
-        if self.oldest_observed_at is None or self.latest_observed_at > time.time() + 60:
-            return "invalid"
-        return "fresh" if self.evidence_fresh() else "expired"
+        return saved_evidence_status(self._evidence_times())
 
     @property
     def within_session_jitter_ms(self) -> Optional[float]:
@@ -392,22 +393,30 @@ class ProxyResult:
             self.telegram_p95_ms if self.verification_profile == "telegram_session" else self.avg_latency_ms
         )
 
-    def to_dict(self) -> dict:
+    def to_dict(self, *, now: float | None = None) -> dict:
+        # A published row describes one instant, even when serialization crosses
+        # its expiry boundary. Readers independently check expiry when used.
+        now = time.time() if now is None else now
+        evidence_status = (
+            saved_evidence_status(self._evidence_times(), now=now) if self.samples else "missing"
+        )
         d = self.proxy.to_dict()
         d.update(
             {
                 "report_schema": 2,
                 "ranking_policy": self.ranking_policy,
-                "evidence_type": self.verification_profile,
+                "evidence_type": (
+                    self.verification_profile if isinstance(self.proxy, (Proxy, TelegramWebProxy)) else "web"
+                ),
                 "oldest_observed_at": self.oldest_observed_at,
                 "latest_observed_at": self.latest_observed_at,
                 "evidence_expires_at": self.evidence_expires_at,
                 "proof_max_age_seconds": self.proof_max_age_seconds,
-                "evidence_status": self.freshness_status,
+                "evidence_status": evidence_status,
                 "provisional": self.provisional,
                 "result_status": (
                     "expired"
-                    if not self.evidence_fresh()
+                    if evidence_status != "fresh"
                     else "provisional" if self.provisional else "complete"
                 ),
                 "attempts": self.attempts,
@@ -430,7 +439,7 @@ class ProxyResult:
             d.update(
                 {
                     "verification_profile": self.verification_profile,
-                    "strict_eligible": self.strict_eligible,
+                    "strict_eligible": evidence_status == "fresh" and self.quality_eligible,
                     "strict_successes": self.strict_successes,
                     "dc_ids_verified": self.dc_ids_verified,
                     "ping_count": self.ping_count,

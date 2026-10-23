@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from dataclasses import dataclass, field
 
@@ -73,6 +74,31 @@ def client_class():
             # Reject before that construction; no direct fallback is allowed.
             raise CdnUnsupported("cdn_unsupported")
 
+        async def _create_exported_sender(self, dc_id):
+            # Telethon's ordinary exported-sender path neither wraps the import
+            # in InvokeWithoutUpdates nor closes the new sender when export or
+            # import fails. A media-only DC must obey both boundaries too.
+            from telethon.network.mtprotosender import MTProtoSender
+            from telethon.tl.alltlobjects import LAYER
+
+            dc = await self._get_dc(dc_id)
+            sender = MTProtoSender(
+                None, loggers=self._log, retries=1, auto_reconnect=False, connect_timeout=15
+            )
+            try:
+                await sender.connect(self._connection(dc.ip_address, dc.port, dc.id, loggers=self._log))
+                auth = await self(functions.auth.ExportAuthorizationRequest(dc_id))
+                initialization = copy.copy(self._init_request)
+                initialization.query = functions.auth.ImportAuthorizationRequest(id=auth.id, bytes=auth.bytes)
+                request = functions.InvokeWithLayerRequest(
+                    LAYER, functions.InvokeWithoutUpdatesRequest(initialization)
+                )
+                await sender.send(request)
+                return sender
+            except BaseException:
+                await _disconnect_sender(sender)
+                raise
+
         async def _call(self, sender, request, ordered=False, flood_sleep_threshold=None):
             requests = request if isinstance(request, (list, tuple)) else [request]
             if any(type(item) not in allowed for item in requests):
@@ -133,7 +159,7 @@ async def disconnect_client(client):
     if client is not None:
         try:
             await asyncio.wait_for(client.disconnect(), 3.0)
-        except (Exception, asyncio.CancelledError):
+        except (Exception, asyncio.CancelledError) as exc:
             # Close known connections even when sender/task cleanup timed out.
             senders = [getattr(client, "_sender", None)]
             senders.extend(sender for _, sender in getattr(client, "_borrowed_senders", {}).values())
@@ -144,3 +170,18 @@ async def disconnect_client(client):
                         await connection.disconnect()
                     except Exception:
                         pass
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+
+
+async def _disconnect_sender(sender):
+    """Bound teardown for a sender not yet registered in the client's cache."""
+    try:
+        await asyncio.wait_for(sender.disconnect(), 3)
+    except (Exception, asyncio.CancelledError):
+        connection = getattr(sender, "_connection", None)
+        if connection is not None:
+            try:
+                await connection.disconnect()
+            except (Exception, asyncio.CancelledError):
+                pass

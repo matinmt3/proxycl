@@ -18,7 +18,7 @@ from pathlib import Path
 from config.loader import AppConfig
 from utils.logger import setup_logger
 
-__version__ = "4.0.0-rc.1"
+__version__ = "4.0.0-rc.2"
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
@@ -98,17 +98,18 @@ def run_pipeline(config: AppConfig, export: bool = True, *, mode: str = "mtproto
     if outcome.summary.get("resumed"):
         _message("Resumed matching saved attempts; completed samples were not counted twice.")
     if outcome.summary.get("provisional"):
-        _message(
-            "PROVISIONAL: sustained finalist testing did not finish. These are strict observations so far."
-        )
+        _message("PROVISIONAL: the scan did not finish. Only completed observations are available so far.")
     if outcome.summary.get("time_budget_seconds") is not None:
         _message(
             f"Time budget: {outcome.summary['time_budget_seconds'] / 60:g} min | Candidate coverage: {outcome.summary.get('coverage_percent', 0):g}%"
         )
     if outcome.summary.get("budget_exhausted"):
-        _message(
-            "Time budget reached. Finished samples are saved; use Resume to continue the candidate pool."
-        )
+        if outcome.summary.get("collection_complete") is False:
+            _message("Time budget reached before collection finished. Start a fresh scan with more time.")
+        else:
+            _message(
+                "Time budget reached. Finished samples are saved; use Resume to continue the candidate pool."
+            )
     if outcome.summary.get("resume_refresh", {}).get("refreshed"):
         refreshed = outcome.summary["resume_refresh"]
         _message(
@@ -175,7 +176,10 @@ def print_best10(results, output_folder: str, *, saved: bool = True, mode: str =
     healthy = [
         r
         for r in results
-        if r.success_rate > 0 and r.avg_latency_ms is not None and (mode == "web" or r.strict_eligible)
+        if r.success_rate > 0
+        and r.avg_latency_ms is not None
+        and r.evidence_fresh()
+        and (mode == "web" or r.strict_eligible)
     ]
     from benchmark.scorer import rank
 
@@ -580,6 +584,7 @@ def cmd_scheduler(config: AppConfig, *, mode: str = "mtproto", limit: int | None
 
 def cmd_top(config: AppConfig, n: int, *, mode: str = "mtproto"):
     from scan import mode_folder
+    from utils.evidence import saved_evidence_status
 
     path = mode_folder(config, mode) / "proxy.json"
     if not path.exists() and mode == "mtproto" and config.scan.network == "default":
@@ -606,6 +611,8 @@ def cmd_top(config: AppConfig, n: int, *, mode: str = "mtproto"):
             raise ValueError(f"Invalid score in export entry {index}; regenerate the export.")
         if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
             raise ValueError(f"Invalid port in export entry {index}; regenerate the export.")
+        if saved_evidence_status(proxy, max_age_seconds=config.output.proof_max_age_minutes * 60) != "fresh":
+            continue
         if mode != "web":
             # Use the same structural proof validation as the dashboard so an
             # old saved transport probe cannot become a strict recommendation.
@@ -615,8 +622,9 @@ def cmd_top(config: AppConfig, n: int, *, mode: str = "mtproto"):
                 continue
         qualified.append(proxy)
     if len(qualified) != len(data):
+        evidence = "fresh qualifying web evidence" if mode == "web" else "fresh strict Telegram evidence"
         _message(
-            f"Skipped {len(data) - len(qualified)} saved entries without strict Telegram evidence. "
+            f"Skipped {len(data) - len(qualified)} saved entries without {evidence}. "
             f"Run: python main.py best10 --mode {mode} --count ALL"
         )
     for index, proxy in enumerate(qualified[:n], 1):
@@ -862,15 +870,32 @@ def _minutes(value: str) -> float:
         raise argparse.ArgumentTypeError("Minutes must be a finite number between 0.01 and 1440") from exc
 
 
-def main(argv: list[str] | None = None) -> int:
+def _activate_managed_runtime(argv):
+    from utils.updater import UpdateError, _read, runtime_python
+
+    pending = _read(PROJECT_ROOT / ".revmamad" / "updates" / "last.json")
+    if pending and pending.get("phase") == "prepared":
+        raise UpdateError("An update was interrupted. Run: python main.py update --rollback")
+    active_python = runtime_python(PROJECT_ROOT, _read(PROJECT_ROOT / ".revmamad" / "active-runtime.json"))
+    if active_python and active_python.resolve() != Path(sys.executable).resolve():
+        os.execv(str(active_python), [str(active_python), str(Path(__file__).resolve()), *argv])
+
+
+def main(argv: list[str] | None = None, *, managed_runtime: bool = False) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="backslashreplace")
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "calibration":
-        from benchmark.calibration import main as calibration_main
+        try:
+            if managed_runtime:
+                _activate_managed_runtime(argv)
+            from benchmark.calibration import main as calibration_main
 
-        return calibration_main(argv[1:])
+            return calibration_main(argv[1:])
+        except Exception as exc:
+            _error(exc)
+            return 1
     parser = argparse.ArgumentParser(description=__doc__, epilog="No command opens the interactive menu.")
     parser.add_argument(
         "command",
@@ -972,6 +997,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--resume requires a saved scan command (best10, run, export, json, csv, or menu)")
     config = None
     try:
+        if managed_runtime and args.command != "update":
+            _activate_managed_runtime(argv)
         personal_config = args.data_dir.expanduser().resolve() / "settings.yaml" if args.data_dir else None
         config = load_config(
             args.config or (personal_config if personal_config and personal_config.is_file() else None)
@@ -1095,18 +1122,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    # Keep the established `python main.py` invocation on the validated runtime too.
-    # Recovery intentionally works through the current interpreter.
-    if sys.argv[1:2] != ["update"]:
-        from utils.updater import _read, runtime_python
-
-        pending = _read(PROJECT_ROOT / ".revmamad" / "updates" / "last.json")
-        if pending and pending.get("phase") == "prepared":
-            print("An update was interrupted. Run: python main.py update --rollback", file=sys.stderr)
-            raise SystemExit(1)
-        active_python = runtime_python(
-            PROJECT_ROOT, _read(PROJECT_ROOT / ".revmamad" / "active-runtime.json")
-        )
-        if active_python and active_python.resolve() != Path(sys.executable).resolve():
-            os.execv(str(active_python), [str(active_python), str(Path(__file__).resolve()), *sys.argv[1:]])
-    raise SystemExit(main())
+    # Parse the command before runtime selection so recovery also works when
+    # global options precede `update`. Help/version need no working runtime.
+    raise SystemExit(main(managed_runtime=True))

@@ -153,7 +153,7 @@ def test_single_checkpoint_writes_are_serialized_and_never_replace_newer_evidenc
     guard = threading.Lock()
     original_save = CheckpointStore.save
     clock = iter(range(1, 1000))
-    monkeypatch.setattr(scan, "time", SimpleNamespace(monotonic=lambda: next(clock) * 1.1))
+    monkeypatch.setattr(scan, "time", SimpleNamespace(monotonic=lambda: next(clock) * 1.1, time=time.time))
 
     def save(store, proxies, state):
         nonlocal active, peak

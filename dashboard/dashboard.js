@@ -26,7 +26,7 @@ let controlBusy = false;
 let controlInitialized = false;
 const count = value => Number.isInteger(value) && value >= 0 ? value.toLocaleString() : "—";
 const percentage = value => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "—";
-const stages = {prefilter: "بررسی اولیهٔ دسترسی", baseline: "آزمون پایهٔ جلسهٔ تلگرام", finalists: "بازآزمایی پایدار نامزدهای نهایی", complete: "آزمون کامل شد", stopped: "آزمون متوقف شد"};
+const stages = {prefilter: "بررسی اولیهٔ دسترسی", baseline: "آزمون پایهٔ جلسهٔ تلگرام", finalists: "بازآزمایی پایدار نامزدهای نهایی", testing: "آزمون پروکسی‌ها", complete: "آزمون کامل شد", stopped: "آزمون متوقف شد"};
 
 function selectedNetwork(current) {
   const value = current?.network ?? current?.summary?.network ?? network;
@@ -140,7 +140,9 @@ function validProgress(current) {
   if (typeof value.active !== "boolean" || typeof value.resumable !== "boolean") return null;
   if (value.remaining_seconds != null && (!Number.isFinite(value.remaining_seconds) || value.remaining_seconds < 0)) return null;
   const age = Date.now() - new Date(value.updated_at).getTime();
-  return Number.isFinite(age) && age >= -60000 && age <= (value.recovery_needed ? 7 * 86400000 : value.active ? 180000 : 86400000) ? value : null;
+  const complete = value.stage === "complete";
+  if (!Number.isFinite(age) || age < -60000 || age > (complete ? 86400000 : value.recovery_needed ? 7 * 86400000 : value.active ? 180000 : 86400000)) return null;
+  return complete ? {...value, active: false, resumable: false, recovery_needed: false, remaining_seconds: null} : value;
 }
 
 function renderActivity(current) {
@@ -382,7 +384,7 @@ function resultCard(proxy, profile = proxy.verification_profile || "transport") 
     if (controlToken) {
       const favourite = node("button", "افزودن به علاقه‌مندی", "button quiet");
       favourite.type = "button";
-      favourite.addEventListener("click", () => libraryAction({action: "favourite_add", mode, network, rank: proxy.rank}));
+      favourite.addEventListener("click", () => libraryAction({action: "favourite_add", mode, network, rank: proxy.rank, candidate_id: proxy.candidate_id}));
       actions.append(favourite);
     }
     item.append(actions);
@@ -501,7 +503,7 @@ function render(current, force = false) {
     byId("scan-meta").textContent = current.message || "آزمون را شروع کنید تا نتایج اینجا نمایش داده شوند.";
   }
   const expiredCount = current.rows.filter(row => evidenceState(row) === "expired").length;
-  const unknownCount = current.rows.filter(row => evidenceState(row) === "missing").length;
+  const unknownCount = current.rows.filter(row => ["missing", "invalid"].includes(evidenceState(row))).length;
   if (expiredCount || unknownCount) {
     byId("freshness").textContent = expiredCount ? `${expiredCount} نتیجه منقضی؛ بازآزمایی لازم` : "زمان اعتبار نامشخص؛ بازآزمایی لازم";
     byId("freshness").className = "pill warning";
@@ -661,6 +663,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 function evidenceState(proxy) {
+  if (["missing", "invalid", "expired"].includes(proxy.evidence_status)) return proxy.evidence_status;
   const expiry = proxy.evidence_expires_at;
   if (!Number.isFinite(expiry)) return "missing";
   return expiry * 1000 > Date.now() ? proxy.provisional === true ? "provisional" : "fresh" : "expired";

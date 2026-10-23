@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.0.0-rc.2 — 2026-10-23 (prerelease)
+
+- Recover an update even when its candidate runtime or pointer is broken; keep recovery usable through the launcher and with global CLI options. Serialize updates across different output configurations of one installation.
+- Validate the complete proof time contract consistently across saved results, dashboard, exports and terminal recommendations; honour shorter current lifetimes and keep provisional staged evidence explicit. Sort direct top-N and HTTP/SOCKS exports consistently.
+- Close failed media-DC senders, suppress updates during authorization imports, preserve cancellation and completed measurements, expire media rankings and refuse credential entry when the terminal cannot disable echo.
+- Protect personal sources and favourites against concurrent writes from shared profiles; scope source toggles by proxy family and bind favourite actions to the actual displayed candidate.
+- Reject malformed source endpoints before storing them. Distinguish collection deadlines from user interruption, accept the live HTTP testing stage, and remove misleading Resume hints after completion. Add regression coverage for the reproduced failures.
+- Preserve the physical-device, real-account, real-WEB-client and multi-day ranking gates. This candidate is not a declaration that those checks passed.
+
 ## 4.0.0-rc.1 — 2026-10-23 (prerelease)
 
 - Add OS-backed cross-process output ownership, crash recovery hints, redacted `doctor` diagnostics, personal settings and staged `update`/`update --rollback` with runtime validation and user-file collision protection.

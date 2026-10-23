@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from config.loader import ScanConfig
 from tester.secrets import decode_secret, normalize_port, normalize_server
+from utils.evidence import saved_evidence_status
 
 DEFAULT_OUTPUT_FOLDER = Path(__file__).resolve().parents[1] / "output"
 DEFAULT_DATA_FILE = DEFAULT_OUTPUT_FOLDER / "proxy.json"  # v2 compatibility
@@ -22,7 +23,7 @@ COUNT_FIELDS = ("collected", "selected", "tested", "verified", "eligible", "disp
 SESSION_METRICS = ("telegram_median_ms", "telegram_p95_ms", "telegram_jitter_ms", "reliability_lower_bound")
 AUXILIARY_MAX_BYTES = 1024 * 1024
 PROGRESS_MAX_AGE_SECONDS = 180
-STAGES = ("prefilter", "baseline", "finalists", "complete", "stopped")
+STAGES = ("prefilter", "baseline", "finalists", "testing", "complete", "stopped")
 
 
 def number(value):
@@ -206,9 +207,7 @@ def _rows(rows: list, mode: str, profile: str = "transport") -> list[dict]:
         for field in (*SORT_FIELDS, "timeout_rate", "median_latency_ms", "jitter_ms", *SESSION_METRICS):
             item[field] = number(row.get(field))
         item["source"] = str(row.get("source") or "unknown")
-        expiry = number(row.get("evidence_expires_at"))
-        now = datetime.now(timezone.utc).timestamp()
-        item["evidence_status"] = "missing" if expiry is None else "fresh" if expiry > now else "expired"
+        item["evidence_status"] = saved_evidence_status(row)
         if mode != "web":
             qualified = profile == "telegram_session" and _strict_qualified(row)
             item["verification_profile"] = "telegram_session" if qualified else "transport"
@@ -726,8 +725,9 @@ def _progress(folder, mode, network):
         from utils.process_lock import output_root_busy
 
         root = folder.parent.parent if folder.parent.name == "networks" else folder
-        orphaned = raw["active"] and not output_root_busy(root)
-        if age > (7 * 86400 if orphaned else PROGRESS_MAX_AGE_SECONDS if raw["active"] else 86400):
+        active = raw["active"] and raw["stage"] != "complete"
+        orphaned = active and not output_root_busy(root)
+        if age > (7 * 86400 if orphaned else PROGRESS_MAX_AGE_SECONDS if active else 86400):
             return None, "stale"
         for key in ("completed", "total", "qualified"):
             if type(raw.get(key)) is not int or not 0 <= raw[key] <= 1_000_000:
@@ -758,6 +758,8 @@ def _progress(folder, mode, network):
         } | {"remaining_seconds": remaining, "command": command, "recovery_needed": orphaned}
         if orphaned:
             result.update(active=False, stage="stopped", remaining_seconds=None)
+        elif result["stage"] == "complete":
+            result.update(active=False, resumable=False, remaining_seconds=None)
         return result, "ready"
     except (ValueError, TypeError, OverflowError):
         return None, "corrupt"

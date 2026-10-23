@@ -13,6 +13,8 @@ public channel document URL, `https://t.me/channel/message_number`. Private
 messages, invitation links, link parameters and implicit channel history are
 rejected. Credentials and account keys exist only in RAM; no `.session` or
 downloaded file is saved. Python cannot guarantee zeroization of every RAM copy.
+If the terminal cannot disable echo, input fails before accepting a credential
+instead of falling back to visible password entry.
 
 Defaults are five freshly qualified MTProto/Telegram WEB candidates, two fresh
 downloads of the same initial 8 MiB per candidate, 512 KiB chunks, one candidate
@@ -32,12 +34,17 @@ fail closed before upstream can create a default-connection client. They are
 reported as `cdn_unsupported`, not a failed proxy. The account restriction,
 missing/changed file, budget, time limit, cancellation and transport failure
 statuses are also separate and do not alter the strict protocol ranking.
+Media-DC authorization imports also suppress updates explicitly. A failed or
+cancelled import closes its new sender before it can escape the client cache.
 
 Only matching complete two-round results enter the media ranking: fewer stalls,
 higher median measured Mbps, then lower median time to first byte. Transfers
 shorter than the target or two seconds are marked `short_sample`; they are not
 long-transfer proof. The measured SHA-256 is the received prefix hash, not an
 independent authoritative checksum of the publisher's entire file.
+On later report reads, expired protocol evidence is removed from the current
+media ranking while its historical measurements remain visible. A shorter
+configured proof lifetime also limits the media report's expiration time.
 
 Logout is attempted through the last selected proxy, using the remaining byte
 budget. `logout_status=confirmed` means Telegram acknowledged logout. A stopped

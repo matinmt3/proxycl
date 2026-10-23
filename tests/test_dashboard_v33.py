@@ -72,6 +72,14 @@ def test_live_progress_survives_missing_snapshot_without_promoting_proxies(tmp_p
     assert current["summary"] == {}
 
 
+def test_single_stage_http_scan_keeps_its_live_testing_progress(tmp_path):
+    extra_file(tmp_path, "progress.json", progress(mode="web", stage="testing"), mode="web")
+    with OutputRootLock(tmp_path):
+        current = api(tmp_path, "web")
+    assert current["progress_state"] == "ready"
+    assert current["progress"]["stage"] == "testing" and current["progress"]["active"]
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -127,6 +135,19 @@ def test_stopped_progress_is_past_activity_with_resume_command_preserved(tmp_pat
     current = api(tmp_path)
     assert current["progress"]["active"] is False
     assert current["progress"]["command"] == "recheck"
+
+
+@pytest.mark.parametrize("total", [0, 5])
+@pytest.mark.parametrize("active", [False, True])
+def test_completed_progress_never_claims_resume_or_orphan_recovery(tmp_path, total, active):
+    extra_file(
+        tmp_path,
+        "progress.json",
+        progress(stage="complete", active=active, completed=total, total=total, qualified=0),
+    )
+    current = api(tmp_path)["progress"]
+    assert current["stage"] == "complete"
+    assert not current["resumable"] and not current["active"] and not current["recovery_needed"]
 
 
 def test_history_has_no_links_or_private_keys_and_is_not_live_eligibility(tmp_path):

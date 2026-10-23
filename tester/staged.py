@@ -77,6 +77,7 @@ class StagedTester:
         result = ParallelTester(self.config)._new_result(proxy)
         result.ranking_policy = self.config.scoring.policy
         result.proof_max_age_seconds = self.config.output.proof_max_age_minutes * 60
+        result.provisional = True
         return result
 
     def _completion_minimum(self) -> int:
@@ -94,6 +95,7 @@ class StagedTester:
             if completed:
                 policy = replace(policy, min_successes=self._completion_minimum())
             result.quality_policy = policy
+            result.provisional = not completed
             self._wire_results[key] = serialize_result(result)
             self._qualified[key] = result.strict_eligible
 

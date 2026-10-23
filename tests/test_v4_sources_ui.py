@@ -141,7 +141,18 @@ async def test_all_memberships_and_identical_content_do_not_multiply_candidates(
 def test_expired_and_legacy_results_remain_visible_but_never_actionable(tmp_path):
     for expiry, expected in [(None, "missing"), (time.time() - 1, "expired"), (time.time() + 500, "fresh")]:
         row = strict_row()
-        row["evidence_expires_at"] = expiry
+        if expiry is None:
+            for key in (
+                "oldest_observed_at",
+                "latest_observed_at",
+                "proof_max_age_seconds",
+                "evidence_expires_at",
+            ):
+                row.pop(key)
+        else:
+            row.update(
+                oldest_observed_at=expiry - 3600, latest_observed_at=expiry - 3599, evidence_expires_at=expiry
+            )
         save(tmp_path, [row])
         current = data.snapshot(tmp_path)
         assert current["state"] == "ready"
@@ -247,6 +258,8 @@ def test_media_report_http_is_read_only_allowlisted_and_network_scoped(config):
                 "candidate_id": "a" * 64,
                 "network_profile": "default",
                 "status": "complete",
+                "proof_expires_at": time.time() + 300,
+                "completed_rounds": 2,
                 "rounds": [],
                 "password": "PRIVATE_PASSWORD",
             },
@@ -254,6 +267,8 @@ def test_media_report_http_is_read_only_allowlisted_and_network_scoped(config):
                 "candidate_id": "b" * 64,
                 "network_profile": "mobile",
                 "status": "complete",
+                "proof_expires_at": time.time() + 300,
+                "completed_rounds": 2,
                 "rounds": [],
             },
         ],

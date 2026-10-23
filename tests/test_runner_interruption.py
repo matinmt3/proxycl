@@ -188,7 +188,8 @@ def test_native_sigint_cli_publishes_observed_top10_and_preserves_last_completed
     top10 = json.loads((folder / "top10.json").read_text(encoding="utf-8"))
     readable = (folder / "best10_links.txt").read_text(encoding="utf-8")
     assert snapshot["summary"]["interrupted"] is True
-    assert snapshot["summary"]["provisional"] is staged
+    # Any stopped scan is provisional, including HTTP and single-stage scans.
+    assert snapshot["summary"]["provisional"] is True
     if staged:
         assert snapshot["summary"]["prefilter_tested"] == 4
     assert {

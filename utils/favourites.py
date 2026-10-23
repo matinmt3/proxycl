@@ -5,9 +5,8 @@ import re
 import time
 
 from config.loader import ScanConfig
-from utils.process_lock import OutputRootLock
 from utils.scan_state import deserialize_proxy, serialize_proxy
-from utils.user_sources import atomic_document, canonical_mode, data_dir, read_document
+from utils.user_sources import atomic_document, canonical_mode, data_dir, personal_data_write, read_document
 
 
 class FavouriteStore:
@@ -61,7 +60,7 @@ class FavouriteStore:
         if candidate["kind"] != ("mtproto" if mode == "mtproto" else mode):
             raise ValueError("Favourite has another transport")
         identity = self.identity(proxy, mode, network)
-        with OutputRootLock(self.config.output.folder, operation="favourites"):
+        with personal_data_write(self.config, operation="favourites"):
             document = self._load()
             if any(row["id"] == identity for row in document["rows"]):
                 return identity
@@ -82,7 +81,7 @@ class FavouriteStore:
     def remove(self, identity):
         if not isinstance(identity, str) or not re.fullmatch(r"[a-f0-9]{64}", identity):
             raise ValueError("Invalid favourite identity")
-        with OutputRootLock(self.config.output.folder, operation="favourites"):
+        with personal_data_write(self.config, operation="favourites"):
             document = self._load()
             before = len(document["rows"])
             document["rows"] = [row for row in document["rows"] if row["id"] != identity]

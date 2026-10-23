@@ -358,6 +358,16 @@ test("live stage updates even while the saved result run ID stays the same", () 
   assert.equal(element("results").children.length, 0);
 });
 
+test("HTTP single-stage testing is a supported live stage", () => {
+  const {context, element} = client();
+  vm.runInContext("mode='web'", context);
+  context.current = {state: "missing", rows: [], summary: {}, source_reports: [], network: "mobile", progress: liveProgress({mode: "web", stage: "testing"})};
+  vm.runInContext("render(current, true)", context);
+  assert.equal(element("scan-progress").value, 2);
+  assert.match(element("progress-label").textContent, /آزمون پروکسی/);
+  assert.match(element("progress-meta").textContent, /2 \/ 20/);
+});
+
 test("resume and recheck commands keep the exact mode and safe network label", () => {
   const {context, element} = client();
   context.current = {state: "missing", rows: [], summary: {}, source_reports: [], network: "mobile", progress: liveProgress({active: false, stage: "stopped", command: "recheck"})};
@@ -368,6 +378,17 @@ test("resume and recheck commands keep the exact mode and safe network label", (
   context.current.network = "wifi; arbitrary command";
   assert.match(vm.runInContext("terminalCommand(current)", context), /--network default$/);
   assert.doesNotMatch(vm.runInContext("terminalCommand(current)", context), /arbitrary/);
+});
+
+test("completed progress never offers resume even when an older writer left the flag enabled", () => {
+  const {context, element} = client();
+  for (const total of [0, 5]) {
+    context.current = {state: "ready", rows: [], summary: {}, source_reports: [], network: "mobile", progress: liveProgress({stage: "complete", active: false, total, completed: total, qualified: 0, resumable: true})};
+    vm.runInContext("render(current, true)", context);
+    assert.equal(element("copy-resume").hidden, true);
+    assert.match(element("progress-label").textContent, /آزمون کامل شد/);
+    assert.doesNotMatch(element("progress-meta").textContent, /اسکن ذخیره‌شده را ادامه دهید/);
+  }
 });
 
 test("stale heartbeat is never shown as an active scan or resumable instruction", () => {
@@ -442,6 +463,28 @@ test("a cached connect click rechecks expiry even before polling refresh", () =>
   let prevented = false;
   link.listeners.click({preventDefault() { prevented = true; }});
   assert.equal(prevented, true);
+});
+
+test("server-rejected evidence stays unusable even when its saved expiry is in the future", () => {
+  const {context, element} = client();
+  for (const evidence_status of ["invalid", "missing", "expired"]) {
+    context.row = strongRow({evidence_status});
+    assert.equal(vm.runInContext("safeConnection(row)", context), null);
+    context.current = {state: "ready", summary: {}, source_reports: [], rows: [context.row]};
+    vm.runInContext("render(current, true)", context);
+    assert.match(element("freshness").textContent, /بازآزمایی لازم/);
+  }
+});
+
+test("favourite clicks carry the rendered identity as well as rank", () => {
+  const {context} = client();
+  vm.runInContext("controlToken='local-token'; libraryAction=payload=>{globalThis.sent=payload}", context);
+  context.row = strongRow({candidate_id: "a".repeat(64)});
+  const card = vm.runInContext("resultCard(row)", context);
+  const nodes = current => [current, ...current.children.flatMap(nodes)];
+  nodes(card).find(item => item.textContent === "افزودن به علاقه‌مندی").listeners.click();
+  assert.equal(context.sent.candidate_id, context.row.candidate_id);
+  assert.equal(context.sent.rank, 1);
 });
 
 test("MTProto output format changes presentation without changing connection identity", () => {

@@ -99,14 +99,14 @@ def refresh_saved_evidence(config, candidates: list, state: dict) -> tuple[dict,
         if result.attempts > maximum:
             raise ValueError("Refresh result exceeds the configured attempt count")
         result.proxy = selected[key]
-        if any(now - sample.timestamp > ttl for sample in result.samples):
+        if result.samples and not result.evidence_fresh(now=now, max_age_seconds=ttl):
             stale_candidates += 1
             stale_samples += result.attempts
         elif result.samples:
             retained.append(serialize_result(result))
             retained_samples += result.attempts
 
-    old_context = now - started > ttl
+    old_context = now - started >= ttl
     refreshed = bool(stale_candidates or old_context)
     stats = {
         "refreshed": refreshed,
