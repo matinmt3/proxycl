@@ -313,7 +313,7 @@ test("staged labels never promote baseline evidence below the final policy", () 
   vm.runInContext("render(current, true)", context);
   assert.equal(element("count-verified").textContent, "0");
   assert.equal(element("results").children.length, 0);
-  assert.match(element("partial-note").textContent, /baseline-only candidates do not qualify/);
+  assert.match(element("partial-note").textContent, /PROVISIONAL: sustained finalist testing is incomplete/);
 });
 
 test("source quality and cooldown remain visible with attribution counts", () => {

@@ -294,7 +294,7 @@ function render(current, force = false) {
   byId("tested-description").textContent = interrupted ? "Candidates with samples" : "Completed checks";
   byId("partial-note").hidden = !interrupted;
   byId("partial-note").textContent = `Stopped scan / partial results. Tested ${count(summary.tested)} of ${count(summary.selected)} selected candidates; ${count(summary.skipped)} skipped. These ranks cover the tested candidates.`;
-  if (interrupted && summary.provisional === true) byId("partial-note").textContent += " Sustained finalist testing is incomplete; baseline-only candidates do not qualify. Resume in the terminal or run a fresh recheck.";
+  if (interrupted && summary.provisional === true) byId("partial-note").textContent += " PROVISIONAL: sustained finalist testing is incomplete. These results meet the baseline policy only; resume in the terminal to finish finalist testing.";
   byId("scan-time-label").textContent = interrupted ? "SCAN STOPPED AT" : "LAST COMPLETED SCAN";
   byId("results-title").textContent = mode !== "web" && !strict ? interrupted ? "Partial transport evidence" : "Transport evidence · strict re-scan needed" : interrupted ? "Verified partial results" : "Top verified results";
   if (summary.strategy === "staged" && strict) byId("results-title").textContent = summary.provisional ? "Qualified results so far · finalist testing incomplete" : "Top results after finalist rechecks";
