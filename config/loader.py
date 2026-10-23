@@ -52,12 +52,14 @@ class ScoringConfig:
     telegram_reliability_weight: float = 0.60
     telegram_latency_weight: float = 0.30
     telegram_stability_weight: float = 0.10
+    policy: str = "v1"
 
     def normalized(self) -> "ScoringConfig":
         total = self.latency_weight + self.success_rate_weight + self.stability_weight + self.timeout_weight
         if total <= 0:
             return ScoringConfig()
         return ScoringConfig(
+            policy=self.policy,
             latency_weight=self.latency_weight / total,
             success_rate_weight=self.success_rate_weight / total,
             stability_weight=self.stability_weight / total,
@@ -79,6 +81,7 @@ class OutputConfig:
     mtproto_min_success_rate: float = 0.8
     mtproto_max_ping_p95_ms: float = 1500.0
     mtproto_max_ping_jitter_ms: float = 500.0
+    proof_max_age_minutes: float = 30.0
 
 
 @dataclass
@@ -367,6 +370,10 @@ class AppConfig:
         ):
             raise ValueError("At least one scoring weight must be greater than zero")
         _number(scoring.max_latency_ms, "scoring.max_latency_ms", positive=True)
+        if scoring.policy not in ("v1", "v2-experimental"):
+            raise ValueError("scoring.policy must be v1 or v2-experimental")
+        if not 1 <= _number(output.proof_max_age_minutes, "output.proof_max_age_minutes") <= 1440:
+            raise ValueError("output.proof_max_age_minutes must be between 1 and 1440")
         strict_weights = (
             "telegram_reliability_weight",
             "telegram_latency_weight",

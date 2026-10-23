@@ -18,7 +18,7 @@ from pathlib import Path
 from config.loader import AppConfig
 from utils.logger import setup_logger
 
-__version__ = "3.4.0"
+__version__ = "4.0.0-rc.1"
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
@@ -32,7 +32,13 @@ class PipelineResults(list):
 
 
 def load_config(path: str | Path | None = None) -> AppConfig:
-    return AppConfig.load(path if path is not None else CONFIG_PATH)
+    personal = PROJECT_ROOT / ".revmamad" / "user-data" / "settings.yaml"
+    selected = path if path is not None else personal if personal.is_file() else CONFIG_PATH
+    config = AppConfig.load(selected)
+    config._external_config = path is not None and Path(path).resolve() != CONFIG_PATH.resolve()
+    if path is not None and Path(path).resolve() != CONFIG_PATH.resolve():
+        config._user_data_dir = Path(path).resolve().parent / ".revmamad" / "user-data"
+    return config
 
 
 def _width() -> int:
@@ -213,6 +219,14 @@ def print_best10(results, output_folder: str, *, saved: bool = True, mode: str =
 
 
 def cmd_collect(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    from utils.process_lock import OutputRootLock
+    from utils.user_sources import apply_user_sources
+
+    with OutputRootLock(config.output.folder, operation="collect"):
+        return _cmd_collect_unlocked(apply_user_sources(config), mode=mode, limit=limit)
+
+
+def _cmd_collect_unlocked(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
     from scan import select_candidates, validate_request
 
     validate_request(mode, limit)
@@ -246,6 +260,13 @@ def cmd_export(config: AppConfig, *, mode: str = "mtproto", limit: int | None = 
 
 
 def cmd_recheck(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
+    from utils.process_lock import OutputRootLock
+
+    with OutputRootLock(config.output.folder, operation="recheck"):
+        return _cmd_recheck_unlocked(config, mode=mode, limit=limit)
+
+
+def _cmd_recheck_unlocked(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
     """Freshly probe up to twenty saved qualified endpoints on this network."""
     from config.loader import SourceConfig, WebSourceConfig
     from dashboard.data import _strict_qualified
@@ -370,27 +391,181 @@ def cmd_dashboard(config: AppConfig, *, open_browser: bool = True) -> bool:
 
 
 def cmd_add_webproxy(config, link):
-    from collector.telegram_webproxy import parse_feed
-    from exporter.exporter import Exporter
-    from telegram_webproxy.parser import parse_line
+    from utils.user_sources import SourceStore
 
-    proxy = parse_line(link, "manual-webproxy")
-    if proxy is None:
-        raise ValueError("Use a valid tg://webproxy?server=...&secret=... link from a WEB operator.")
-    sources = [
-        source for source in config.webproxy_sources if source.enabled and source.url.startswith("file://")
-    ]
-    if not sources:
-        raise ValueError("Configure an enabled file:// source under webproxy_sources before importing links.")
-    path = Path(sources[0].url[len("file://") :])
-    content = path.read_text(encoding="utf-8-sig") if path.exists() else ""
-    if len(content.encode("utf-8")) > 4 * 1024 * 1024:
-        raise ValueError("The manual WEB source exceeds 4 MiB.")
-    if proxy.key() not in {row.key() for row in parse_feed(content, sources[0].name)}:
-        Exporter(replace(config.output, folder=str(path.parent)))._write(
-            path.name, content.rstrip() + "\n" + proxy.tg_link() + "\n"
-        )
+    # An explicit external config's manual file remains a supported user-owned
+    # interface. The shipped configuration uses the separate personal store.
+    if getattr(config, "_external_config", False):
+        from collector.telegram_webproxy import parse_feed
+        from exporter.exporter import Exporter
+        from telegram_webproxy.parser import parse_line
+        from utils.process_lock import OutputRootLock
+
+        source = next((s for s in config.webproxy_sources if s.enabled and s.url.startswith("file://")), None)
+        proxy = parse_line(link, "manual-webproxy")
+        if proxy is None:
+            raise ValueError("Use a valid tg://webproxy link from a WEB operator")
+        if source is not None:
+            path = Path(source.url[len("file://") :])
+            with OutputRootLock(config.output.folder, operation="manual-source"):
+                if path.exists() and path.stat().st_size > 4 * 1024 * 1024:
+                    raise ValueError("The manual WEB source exceeds 4 MiB")
+                content = path.read_text(encoding="utf-8-sig") if path.exists() else ""
+                if proxy.key() not in {p.key() for p in parse_feed(content, source.name)}:
+                    Exporter(replace(config.output, folder=str(path.parent)))._write(
+                        path.name, content.rstrip() + "\n" + proxy.tg_link() + "\n"
+                    )
+            _message("WEB link saved. Run: python main.py best10 --mode webproxy")
+            return
+    SourceStore(config).import_manual("webproxy", link, name="Personal WEB links")
     _message("WEB link saved. Run: python main.py best10 --mode webproxy")
+
+
+def cmd_doctor(config, *, report=None):
+    from scan import network_folder
+    from utils.doctor import collect_diagnostics, write_diagnostics
+
+    document = collect_diagnostics(config)
+    path = Path(report) if report else network_folder(config) / "doctor-report.json"
+    write_diagnostics(path, document)
+    print(json.dumps(document, ensure_ascii=False, indent=2))
+    _message(f"Redacted local report: {path}")
+    return 0 if document["all_passed"] else 1
+
+
+def cmd_sources(config, args):
+    from utils.user_sources import SourceStore, read_document
+
+    store = SourceStore(config)
+    action = args.action
+    if action == "list":
+        result = store.list(args.mode)
+    elif action == "export":
+        result = store.export_document()
+    elif action == "import":
+        if args.file is None:
+            raise ValueError("sources --action import requires --file")
+        result = {"imported": store.import_document(read_document(args.file, {}))}
+    elif action in ("enable", "disable"):
+        if not args.source_id:
+            raise ValueError("Choose --source-id from the source list")
+        store.set_enabled(args.source_id, action == "enable")
+        result = {"status": action}
+    elif action == "add":
+        if not args.url or not args.name:
+            raise ValueError("sources --action add requires --name and --url")
+        result = {
+            "added": store.add_feed(
+                args.mode, args.name, args.url, type=args.source_type, protocol=args.protocol
+            )
+        }
+    elif action == "manual":
+        if args.file is None:
+            raise ValueError("sources --action manual requires --file with proxy links")
+        with args.file.open("rb") as stream:
+            content = stream.read(1024 * 1024 + 1)
+        if len(content) > 1024 * 1024:
+            raise ValueError("Manual links file exceeds 1 MiB")
+        result = {
+            "imported": store.import_manual(
+                args.mode, content.decode("utf-8-sig"), args.name or "Personal links"
+            )
+        }
+    else:
+        raise ValueError("Unknown sources action")
+    encoded = json.dumps(result, ensure_ascii=False, indent=2)
+    if action == "export" and args.file:
+        # Export is explicit: it contains complete user feed/link data.
+        args.file.parent.mkdir(parents=True, exist_ok=True)
+        with args.file.open("x", encoding="utf-8", newline="\n") as stream:
+            stream.write(encoded + "\n")
+        _message(f"Sources exported: {args.file}")
+    else:
+        print(encoded)
+
+
+def _media_candidates(config, mode):
+    from benchmark.scorer import rank, score_all
+    from scan import mode_folder
+    from utils.scan_state import deserialize_result
+
+    if mode not in ("mtproto", "telegram", "webproxy"):
+        raise ValueError("Media testing accepts freshly qualified MTProto or Telegram WEB proxies")
+    path = mode_folder(config, mode) / "observations.json"
+    if not path.is_file():
+        raise ValueError("Run a completed strict scan on this network first")
+    with path.open("rb") as stream:
+        content = stream.read(64 * 1024 * 1024 + 1)
+    if len(content) > 64 * 1024 * 1024:
+        raise ValueError("Saved observations exceed the media selection read limit")
+    document = json.loads(content)
+    if (
+        not isinstance(document, dict)
+        or document.get("mode") != mode
+        or not isinstance(document.get("rows"), list)
+    ):
+        raise ValueError("Invalid saved observations; run a fresh strict scan")
+    summary = document.get("summary", {})
+    if not isinstance(summary, dict) or summary.get("network", "default") != config.scan.network:
+        raise ValueError("Saved observations do not match this network")
+    if summary.get("provisional") or summary.get("interrupted"):
+        raise ValueError("Complete the strict scan before media testing")
+    results = []
+    for row in document["rows"]:
+        if not isinstance(row, dict):
+            raise ValueError("Invalid observation row")
+        if row.get("verification_profile") != "telegram_session":
+            continue
+        proxy = {
+            key: row[key]
+            for key in ("server", "port", "secret", "source", "tag", "source_memberships")
+            if key in row
+        }
+        proxy["kind"] = "webproxy" if mode == "webproxy" else "mtproto"
+        if mode == "webproxy":
+            proxy["protocol"] = "webproxy"
+        result = deserialize_result(
+            {
+                "proxy": proxy,
+                "samples": row.get("samples"),
+                "verification_profile": "telegram_session",
+                "quality_policy": row.get("strict_policy", {}),
+                "ranking_policy": row.get("ranking_policy", "v1"),
+                "proof_max_age_seconds": min(
+                    row.get("proof_max_age_seconds", summary.get("proof_max_age_seconds", 1800)),
+                    config.output.proof_max_age_minutes * 60,
+                ),
+                "provisional": row.get("provisional", False),
+            }
+        )
+        if result.strict_eligible:
+            results.append(result)
+    return rank(score_all(results, config.scoring))
+
+
+def cmd_media_test(config, *, mode="mtproto", link=None, top=5, budget_mib=100, minutes=10):
+    from media_test.models import MediaSettings, parse_public_message_link
+    from media_test.report import write_report
+    from media_test.runner import run_media_test
+    from scan import mode_folder
+    from utils.process_lock import OutputRootLock
+
+    parse_public_message_link(link)
+    settings = MediaSettings(
+        max_candidates=top, budget_bytes=budget_mib * 1024 * 1024, timeout_seconds=minutes * 60
+    )
+    with OutputRootLock(config.output.folder, operation="media-test"):
+        candidates = _media_candidates(config, mode)
+        if not candidates:
+            raise ValueError("No fresh qualified candidates. Complete a strict scan first")
+        document = run_media_test(
+            candidates, network_profile=config.scan.network, message_link=link, settings=settings
+        )
+        path = mode_folder(config, mode) / "media-report.json"
+        write_report(path, document)
+    print(json.dumps(document, ensure_ascii=False, indent=2))
+    _message(f"Independent media report: {path}")
+    return document
 
 
 def cmd_scheduler(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
@@ -558,8 +733,12 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
         print(
             f"13) Testing time: {config.scan.time_budget_seconds / 60 if config.scan.time_budget_seconds else 'unlimited'} minutes"
         )
+        print("14) Local diagnostics / عیب‌یابی محلی")
+        print("15) Personal sources / منابع شخصی")
+        print("16) Optional media test / تست اختیاری دانلود")
+        print("17) Save settings / ذخیره تنظیمات شخصی")
         try:
-            choice = input("\nChoose (1-13): ").strip()
+            choice = input("\nChoose (1-17): ").strip()
         except EOFError:
             _message("No keyboard input. Run a direct command, e.g. python main.py best10")
             return
@@ -624,8 +803,32 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
                 duration = input("Testing minutes: 3 / 10 / 20 / custom; 0 = unlimited: ").strip()
                 config.scan.time_budget_seconds = None if duration == "0" else _minutes(duration) * 60
                 config.scan.validate()
+            elif choice == "14":
+                cmd_doctor(config)
+            elif choice == "15":
+                from utils.user_sources import SourceStore
+
+                for row in SourceStore(config).list():
+                    _message(f"{row['id'][:12]} | {row['mode']} | {row['name']} | enabled={row['enabled']}")
+                _message("Manage sources in the local dashboard or with: python main.py sources --help")
+            elif choice == "16":
+                mode = _menu_mode()
+                if mode:
+                    link = input("Public test-file message link (0 = back): ").strip()
+                    if link != "0":
+                        try:
+                            cmd_media_test(config, mode=mode, link=link)
+                        except Exception as exc:
+                            _message(
+                                f"Media test did not finish ({type(exc).__name__}). Account details were not logged."
+                            )
+            elif choice == "17":
+                from utils.settings import save_settings
+
+                save_settings(config)
+                _message("Personal settings saved; tracked product files were preserved.")
             else:
-                print("Invalid choice. Type a number from 1 to 13.")
+                print("Invalid choice. Type a number from 1 to 17.")
         except KeyboardInterrupt:
             print("\nCancelled. Returning to the menu.")
         except EOFError:
@@ -660,6 +863,14 @@ def _minutes(value: str) -> float:
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "calibration":
+        from benchmark.calibration import main as calibration_main
+
+        return calibration_main(argv[1:])
     parser = argparse.ArgumentParser(description=__doc__, epilog="No command opens the interactive menu.")
     parser.add_argument(
         "command",
@@ -681,6 +892,11 @@ def main(argv: list[str] | None = None) -> int:
             "selftest",
             "recheck",
             "add-webproxy",
+            "doctor",
+            "sources",
+            "media-test",
+            "update",
+            "settings",
         ),
     )
     parser.add_argument(
@@ -714,6 +930,35 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fixed-workers", action="store_true", help="disable adaptive concurrency")
     parser.add_argument("--read-only", action="store_true", help="disable local dashboard scan controls")
     parser.add_argument("--link", help="WEB share link for add-webproxy")
+    parser.add_argument("--data-dir", type=Path, help="explicit personal sources/settings directory")
+    parser.add_argument("--report", type=Path, help="redacted doctor report destination")
+    parser.add_argument(
+        "--action",
+        default="list",
+        choices=("list", "add", "manual", "import", "export", "enable", "disable", "save"),
+    )
+    parser.add_argument("--file", type=Path, help="personal source import/export file")
+    parser.add_argument("--source-id", help="source digest from sources --action list")
+    parser.add_argument("--url", help="public source URL")
+    parser.add_argument("--name", help="personal source name")
+    parser.add_argument(
+        "--source-type",
+        default="http_txt",
+        choices=("http_txt", "http_json", "json_feed", "github_raw", "telegram_channel"),
+    )
+    parser.add_argument("--protocol", default="http", choices=("http", "https", "socks4", "socks5"))
+    parser.add_argument("--top", type=_positive_int, default=5, help="media candidates, 1-5")
+    parser.add_argument(
+        "--budget-mib", type=_positive_int, default=100, help="media observed byte budget, 1-100 MiB"
+    )
+    parser.add_argument(
+        "--ranking-policy", choices=("v1", "v2-experimental"), help="v2 requires calibration before promotion"
+    )
+    parser.add_argument(
+        "--rollback", action="store_true", help="restore the previous validated application update"
+    )
+    parser.add_argument("--check", action="store_true", help="check for an update without applying it")
+    parser.add_argument("--ref", help="explicit branch/tag for an update")
     parser.add_argument(
         "--single-stage", action="store_true", help="strict baseline scan without sustained finalists"
     )
@@ -727,7 +972,15 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--resume requires a saved scan command (best10, run, export, json, csv, or menu)")
     config = None
     try:
-        config = load_config(args.config)
+        personal_config = args.data_dir.expanduser().resolve() / "settings.yaml" if args.data_dir else None
+        config = load_config(
+            args.config or (personal_config if personal_config and personal_config.is_file() else None)
+        )
+        config._external_config = args.config is not None and args.config.resolve() != CONFIG_PATH.resolve()
+        if args.data_dir:
+            config._user_data_dir = args.data_dir.expanduser().resolve()
+        if args.ranking_policy:
+            config.scoring.policy = args.ranking_policy
         if args.network is not None:
             config.scan.network = args.network
         if args.resume:
@@ -741,9 +994,12 @@ def main(argv: list[str] | None = None) -> int:
             config.scan.strategy = "single"
         if args.no_prefilter:
             config.scan.prefilter = False
-        setup_logger(
-            name="mtselector", log_dir=config.logging.log_dir, level=getattr(logging, config.logging.level)
-        )
+        if args.command != "media-test":
+            setup_logger(
+                name="mtselector",
+                log_dir=config.logging.log_dir,
+                level=getattr(logging, config.logging.level),
+            )
         if args.command == "menu":
             interactive_menu(config, open_browser=not args.no_browser)
         elif args.command == "run":
@@ -772,6 +1028,48 @@ def main(argv: list[str] | None = None) -> int:
             return run_selftest(config)
         elif args.command == "add-webproxy":
             cmd_add_webproxy(config, args.link)
+        elif args.command == "doctor":
+            return cmd_doctor(config, report=args.report)
+        elif args.command == "sources":
+            cmd_sources(config, args)
+        elif args.command == "media-test":
+            try:
+                cmd_media_test(
+                    config,
+                    mode=args.mode,
+                    link=args.link,
+                    top=args.top,
+                    budget_mib=args.budget_mib,
+                    minutes=args.minutes or 10,
+                )
+            except Exception as exc:
+                _message(
+                    f"Media test did not finish ({type(exc).__name__}). Check the optional dependencies, public file link and fresh scan; account details were not logged."
+                )
+                return 1
+        elif args.command == "settings":
+            from utils.settings import save_settings
+
+            if args.action != "save":
+                raise ValueError(
+                    "Use settings --action save to preserve the current configuration in user-data"
+                )
+            print(save_settings(config))
+        elif args.command == "update":
+            from utils.updater import update
+
+            print(
+                json.dumps(
+                    update(
+                        PROJECT_ROOT,
+                        rollback=args.rollback,
+                        check=args.check,
+                        ref=args.ref,
+                        output_folder=config.output.folder,
+                    ),
+                    indent=2,
+                )
+            )
         else:
             commands = {
                 "best10": cmd_best10,
@@ -797,4 +1095,18 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # Keep the established `python main.py` invocation on the validated runtime too.
+    # Recovery intentionally works through the current interpreter.
+    if sys.argv[1:2] != ["update"]:
+        from utils.updater import _read, runtime_python
+
+        pending = _read(PROJECT_ROOT / ".revmamad" / "updates" / "last.json")
+        if pending and pending.get("phase") == "prepared":
+            print("An update was interrupted. Run: python main.py update --rollback", file=sys.stderr)
+            raise SystemExit(1)
+        active_python = runtime_python(
+            PROJECT_ROOT, _read(PROJECT_ROOT / ".revmamad" / "active-runtime.json")
+        )
+        if active_python and active_python.resolve() != Path(sys.executable).resolve():
+            os.execv(str(active_python), [str(active_python), str(Path(__file__).resolve()), *sys.argv[1:]])
     raise SystemExit(main())

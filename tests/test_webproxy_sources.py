@@ -105,7 +105,10 @@ async def test_collection_isolates_bad_empty_and_disabled_sources(tmp_path):
     collector = WebCollector(config)
     result = await collector.collect_async()
     assert [p.uri() for p in result] == ["http://192.0.2.1:80"]
-    assert collector.source_reports == [
+    assert [
+        {k: v for k, v in row.items() if k in {"name", "status", "count", "error"}}
+        for row in collector.source_reports
+    ] == [
         {"name": "bad", "status": "error", "count": 0, "error": "FileNotFoundError"},
         {"name": "good", "status": "ok", "count": 1},
         {"name": "empty", "status": "empty", "count": 0},
@@ -129,7 +132,9 @@ async def test_oversized_local_feed_is_rejected_while_good_feed_survives(tmp_pat
     ]
     collector = WebCollector(SimpleNamespace(web_sources=sources))
     assert [p.uri() for p in await collector.collect_async()] == ["socks4://192.0.2.2:1080"]
-    assert collector.source_reports[0] == {
+    assert {
+        k: v for k, v in collector.source_reports[0].items() if k in {"name", "status", "count", "error"}
+    } == {
         "name": "large",
         "status": "error",
         "count": 0,

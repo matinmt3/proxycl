@@ -113,7 +113,9 @@ class SourceHealth:
                 status = value.get("status")
                 row["status"] = status if status in {"ok", "empty", "error"} else "empty"
                 row["last_fetch_status"] = row["status"]
-                row["quality_attribution"] = "first_source_after_deduplication"
+                row["quality_attribution"] = value.get(
+                    "quality_attribution", "first_source_after_deduplication"
+                )
                 self._entries[key] = row
         except FileNotFoundError:
             pass
@@ -200,7 +202,7 @@ class SourceHealth:
                 name=_safe_name(source),
                 **counts.get(key, {"checked": 0, "qualified": 0, "strict_qualified": 0}),
             )
-            row.update(quality_checked_at=checked_at, quality_attribution="first_source_after_deduplication")
+            row.update(quality_checked_at=checked_at, quality_attribution="all_memberships_non_additive")
         self._persist()
 
     def rows(self, sources) -> list[dict]:
@@ -218,8 +220,8 @@ class SourceHealth:
         return rows
 
 
-def quality_counts(results, source_by_proxy: dict[str, str], sources) -> dict[str, dict]:
-    """Attribute a deduplicated candidate once, to its first configured source."""
+def quality_counts(results, source_by_proxy: dict[str, str | list[str]], sources) -> dict[str, dict]:
+    """Count each candidate once per membership; totals must never be summed."""
     counts = {
         source_identity(source): {"checked": 0, "qualified": 0, "strict_qualified": 0} for source in sources
     }
@@ -229,13 +231,21 @@ def quality_counts(results, source_by_proxy: dict[str, str], sources) -> dict[st
         if key in seen or not result.attempts:
             continue
         seen.add(key)
-        identity = source_by_proxy.get(key)
-        if identity not in counts:
-            continue
-        count = counts[identity]
-        count["checked"] += 1
-        strict = bool(result.strict_eligible)
-        qualified = strict if getattr(result.proxy, "secret", None) is not None else result.successes > 0
-        count["strict_qualified"] += int(strict)
-        count["qualified"] += int(qualified)
+        identities = source_by_proxy.get(key, [])
+        if isinstance(identities, str):
+            identities = [identities]
+        for identity in set(identities):
+            if identity not in counts:
+                continue
+            count = counts[identity]
+            count["checked"] += 1
+            fresh = getattr(result, "evidence_fresh", lambda: True)()
+            strict = bool(result.strict_eligible) and fresh
+            qualified = (
+                strict
+                if getattr(result.proxy, "secret", None) is not None
+                else result.successes > 0 and fresh
+            )
+            count["strict_qualified"] += int(strict)
+            count["qualified"] += int(qualified)
     return counts

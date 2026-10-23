@@ -47,7 +47,7 @@ code, .endpoint, .source-list li, .result-card { overflow-wrap: anywhere; }
 .quiet { background: transparent; }
 .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .primary:hover { background: #8ff2cb; }
-.mode-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; background: var(--surface); border: 1px solid var(--line); padding: 6px; border-radius: 14px; margin-bottom: 28px; }
+.mode-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; background: var(--surface); border: 1px solid var(--line); padding: 6px; border-radius: 14px; margin-bottom: 28px; }
 .mode-tabs button { border-color: transparent; background: transparent; min-width: 0; font-weight: 700; padding: 11px; }
 .mode-tabs button span { display: inline-block; color: var(--muted); font-size: .8rem; margin-left: 8px; font-weight: 400; }
 .mode-tabs button[aria-selected="true"] { background: var(--surface-raised); border-color: var(--accent); color: var(--accent); }
@@ -157,3 +157,15 @@ dialog button { margin-top: 16px; }
   footer { flex-direction: column; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
+
+:root[data-theme="light"] { color-scheme: light; --background: #f1f5f9; --surface: #ffffff; --surface-raised: #e6edf4; --text: #142638; --muted: #44596e; --line: #a7b8c8; --accent: #006b48; --accent-ink: #fff; --warning: #805400; --danger: #a52424; }
+:root[data-theme="light"] button:hover, :root[data-theme="light"] .button:hover { background: #d4e7df; color: #142638; }
+.endpoint, .result-measures strong, code, #control-network { direction: ltr; unicode-bidi: isolate; }
+.eyebrow, .small-label { letter-spacing: normal; }
+.library-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 0; }
+.library-row span { min-width: 0; overflow-wrap: anywhere; flex: 1 1 140px; }
+#personal-library .field { margin-block: 12px; }
+#personal-library details, #media-panel { margin-block: 14px; }
+#library-sources { max-height: 300px; overflow: auto; }
+.status-badge { margin-top: 8px; font-size: .8rem; }
+@media (max-width: 520px) { .mode-tabs { grid-template-columns: 1fr; } .mode-tabs button span { display: inline; } .topbar { flex-wrap: wrap; } .toolbar { width: 100%; } .toolbar .button { flex: 1 1 auto; } }

@@ -1,0 +1,3 @@
+# Optional account-authorized media test; never required by the light installer.
+# Audited against upstream 1.45.0 Connection, downloads, auth and session sources.
+Telethon==1.45.0

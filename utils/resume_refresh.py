@@ -42,7 +42,7 @@ def refresh_saved_evidence(config, candidates: list, state: dict) -> tuple[dict,
     Caller-owned dictionaries, samples, candidate objects and run_id are kept.
     """
     now = time.time()
-    ttl = config.scan.checkpoint_max_age_minutes * 60
+    ttl = min(config.scan.checkpoint_max_age_minutes, config.output.proof_max_age_minutes) * 60
     if not isinstance(candidates, list) or len(candidates) > 1_000_000:
         raise ValueError("Invalid refresh candidate pool")
     selected = {proxy.key(): proxy for proxy in candidates}

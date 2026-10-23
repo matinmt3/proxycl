@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import statistics
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
 class FailureReason(str, Enum):
     NONE = "none"
     DNS_ERROR = "dns_error"
+    TLS_ERROR = "tls_error"
+    CLIENT_INCOMPATIBLE = "client_incompatible"
     TCP_TIMEOUT = "tcp_timeout"
     TCP_REFUSED = "tcp_refused"
     HANDSHAKE_TIMEOUT = "handshake_timeout"
@@ -37,6 +40,7 @@ class Proxy:
     secret: str
     source: str = "unknown"
     tag: Optional[str] = None
+    source_memberships: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         self.server = self.server.strip().strip("[]").lower()
@@ -55,6 +59,7 @@ class Proxy:
             "secret": self.secret,
             "source": self.source,
             "tag": self.tag,
+            "source_memberships": list(self.source_memberships),
         }
 
     def tg_link(self) -> str:
@@ -226,6 +231,64 @@ class ProxyResult:
     score: float = 0.0
     verification_profile: str = "transport"
     quality_policy: TelegramQualityPolicy = field(default_factory=TelegramQualityPolicy)
+    ranking_policy: str = "v1"
+    proof_max_age_seconds: float = 1800.0
+    provisional: bool = False
+
+    @property
+    def oldest_observed_at(self) -> Optional[float]:
+        values = [s.timestamp for s in self.samples]
+        if not values or any(type(v) not in (int, float) or not math.isfinite(v) or v <= 0 for v in values):
+            return None
+        return min(values)
+
+    @property
+    def latest_observed_at(self) -> Optional[float]:
+        return max(s.timestamp for s in self.samples) if self.oldest_observed_at is not None else None
+
+    @property
+    def evidence_expires_at(self) -> Optional[float]:
+        oldest = self.oldest_observed_at
+        return oldest + self.proof_max_age_seconds if oldest is not None else None
+
+    def evidence_fresh(self, *, now: float | None = None, max_age_seconds: float | None = None) -> bool:
+        """All finished evidence must be recent; a new sample cannot renew old proof."""
+        now = time.time() if now is None else now
+        ttl = self.proof_max_age_seconds
+        if max_age_seconds is not None:
+            ttl = min(ttl, max_age_seconds)
+        oldest, newest = self.oldest_observed_at, self.latest_observed_at
+        return (
+            type(ttl) in (int, float)
+            and math.isfinite(ttl)
+            and ttl > 0
+            and oldest is not None
+            and newest <= now + 60
+            and now < oldest + ttl
+        )
+
+    @property
+    def freshness_status(self) -> str:
+        if not self.samples:
+            return "missing"
+        if self.oldest_observed_at is None or self.latest_observed_at > time.time() + 60:
+            return "invalid"
+        return "fresh" if self.evidence_fresh() else "expired"
+
+    @property
+    def within_session_jitter_ms(self) -> Optional[float]:
+        differences = [
+            abs(b - a)
+            for sample in self._strict_samples()
+            for a, b in zip(sample.ping_rtts_ms, sample.ping_rtts_ms[1:])
+        ]
+        return statistics.mean(differences) if differences else None
+
+    @property
+    def interconnection_drift_ms(self) -> Optional[float]:
+        """Population deviation of each independent session's median ping RTT."""
+        medians = [statistics.median(sample.ping_rtts_ms) for sample in self._strict_samples()]
+        return statistics.pstdev(medians) if len(medians) >= 2 else None
 
     def _strict_samples(self) -> list[TestSample]:
         if self.verification_profile != "telegram_session" or not isinstance(
@@ -304,6 +367,11 @@ class ProxyResult:
 
     @property
     def strict_eligible(self) -> bool:
+        return self.evidence_fresh() and self.quality_eligible
+
+    @property
+    def quality_eligible(self) -> bool:
+        """Structural quality only, used to validate old checkpoints before refresh."""
         successes = self.strict_successes
         p95, jitter = self.telegram_p95_ms, self.telegram_jitter_ms
         policy = self.quality_policy
@@ -328,6 +396,20 @@ class ProxyResult:
         d = self.proxy.to_dict()
         d.update(
             {
+                "report_schema": 2,
+                "ranking_policy": self.ranking_policy,
+                "evidence_type": self.verification_profile,
+                "oldest_observed_at": self.oldest_observed_at,
+                "latest_observed_at": self.latest_observed_at,
+                "evidence_expires_at": self.evidence_expires_at,
+                "proof_max_age_seconds": self.proof_max_age_seconds,
+                "evidence_status": self.freshness_status,
+                "provisional": self.provisional,
+                "result_status": (
+                    "expired"
+                    if not self.evidence_fresh()
+                    else "provisional" if self.provisional else "complete"
+                ),
                 "attempts": self.attempts,
                 "successes": self.successes,
                 "success_rate": round(self.success_rate, 4),
@@ -355,6 +437,8 @@ class ProxyResult:
                     "telegram_median_ms": self.telegram_median_ms,
                     "telegram_p95_ms": self.telegram_p95_ms,
                     "telegram_jitter_ms": self.telegram_jitter_ms,
+                    "within_session_jitter_ms": self.within_session_jitter_ms,
+                    "interconnection_drift_ms": self.interconnection_drift_ms,
                     "reliability_lower_bound": self.reliability_lower_bound,
                     "strict_policy": self.quality_policy.to_dict(),
                 }

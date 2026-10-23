@@ -86,7 +86,7 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self):
-        if self.path != "/api/control" or self.controller is None:
+        if self.path not in ("/api/control", "/api/library") or self.controller is None:
             self._json(404, {"error": "Controls are unavailable"})
             return
         if not self._control_origin(post=True):
@@ -101,10 +101,10 @@ class Handler(BaseHTTPRequestHandler):
         lengths = self.headers.get_all("Content-Length", [])
         if (
             len(lengths) != 1
-            or len(lengths[0]) > 4
+            or len(lengths[0]) > 7
             or not lengths[0].isascii()
             or not lengths[0].isdigit()
-            or not 0 < int(lengths[0]) <= MAX_BODY
+            or not 0 < int(lengths[0]) <= (4 * 1024 * 1024 if self.path == "/api/library" else MAX_BODY)
             or self.headers.get("Transfer-Encoding") is not None
         ):
             self._json(413, {"error": "Scan request is too large or has no valid length"})
@@ -125,13 +125,17 @@ class Handler(BaseHTTPRequestHandler):
             self.connection.settimeout(5)
             self._body_consumed = True
             payload = json.loads(self.rfile.read(int(lengths[0])), object_pairs_hook=unique_keys)
-            job = self.controller.request(payload)
+            job = (
+                self.controller.request(payload)
+                if self.path == "/api/control"
+                else self.controller.library(payload)
+            )
         except ControlError as exc:
             self._json(exc.status, {"error": str(exc)})
         except (ValueError, UnicodeError, RecursionError, TimeoutError, OSError):
             self._json(400, {"error": "Invalid JSON scan request"})
         else:
-            self._json(202, {"job": job})
+            self._json(202, {"job": job}) if self.path == "/api/control" else self._json(200, job)
 
     def do_GET(self):
         request = urlsplit(self.path)

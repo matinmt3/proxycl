@@ -59,11 +59,20 @@ class ParallelTester:
     def _new_result(self, proxy: Proxy) -> ProxyResult:
         settings = self.config.testing
         if settings.mtproto_profile == "transport":
-            return ProxyResult(proxy)
+            return ProxyResult(
+                proxy,
+                ranking_policy=getattr(getattr(self.config, "scoring", None), "policy", "v1"),
+                proof_max_age_seconds=getattr(
+                    getattr(self.config, "output", None), "proof_max_age_minutes", 30
+                )
+                * 60,
+            )
         output = self.config.output
         return ProxyResult(
             proxy,
             verification_profile="telegram_session",
+            ranking_policy=getattr(getattr(self.config, "scoring", None), "policy", "v1"),
+            proof_max_age_seconds=getattr(output, "proof_max_age_minutes", 30) * 60,
             quality_policy=TelegramQualityPolicy(
                 min_successes=output.mtproto_min_successes,
                 min_success_rate=output.mtproto_min_success_rate,

@@ -12,5 +12,5 @@ class TelegramWebExporter(Exporter):
         return result.proxy.web_link()
 
     def export_txt(self, results: list[ProxyResult], filename: str = "proxy.txt"):
-        lines = [f"{self.connection_link(r)}  # score={r.score:.3f}" for r in results]
+        lines = [f"{self.connection_link(r)}  # score={r.score:.3f}" for r in self._filtered(results)]
         return self._write(filename, "\n".join(lines) + ("\n" if lines else ""))

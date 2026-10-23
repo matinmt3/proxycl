@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import math
+import random
+import secrets
 import time
 from dataclasses import replace
 
@@ -64,6 +66,7 @@ class StagedTester:
         self._deadline = None
         self._prefilter_deadline = None
         self._baseline_deadline = None
+        self._round_seed = secrets.randbits(63)
 
     def _baseline_result(self, result: ProxyResult) -> ProxyResult:
         baseline = ParallelTester(self.config)._new_result(result.proxy)
@@ -71,7 +74,10 @@ class StagedTester:
         return baseline
 
     def _new_result(self, proxy: Proxy) -> ProxyResult:
-        return ParallelTester(self.config)._new_result(proxy)
+        result = ParallelTester(self.config)._new_result(proxy)
+        result.ranking_policy = self.config.scoring.policy
+        result.proof_max_age_seconds = self.config.output.proof_max_age_minutes * 60
+        return result
 
     def _completion_minimum(self) -> int:
         """Baseline-only results must not bypass the sustained finalist stage."""
@@ -109,6 +115,8 @@ class StagedTester:
             "coverage_limited": self._coverage_limited,
             "budget_round_finished": self._budget_round_finished,
             "completed_finalists": dict(self._completed_finalists),
+            "round_seed": self._round_seed,
+            "ranking_policy": self.config.scoring.policy,
         }
 
     @property
@@ -131,6 +139,8 @@ class StagedTester:
             completed, total = finalists_tested, finalists_selected
         return {
             "stage": self._stage,
+            "ranking_policy": self.config.scoring.policy,
+            "round_seed": self._round_seed,
             "provisional": self._stage != "complete",
             "prefilter_tested": len(self._prefilter),
             "prefilter_passed": passed,
@@ -199,6 +209,12 @@ class StagedTester:
             return
         if not isinstance(row, dict) or type(row.get("schema")) is not int or row["schema"] != 1:
             raise ValueError("Invalid staged checkpoint schema")
+        seed = row.get("round_seed", self._round_seed)
+        if type(seed) is not int or not 0 <= seed < 2**63:
+            raise ValueError("Invalid staged checkpoint round seed")
+        self._round_seed = seed
+        if row.get("ranking_policy", "v1") != self.config.scoring.policy:
+            raise ValueError("Checkpoint ranking policy changed; start a fresh scan")
         stage = row.get("stage")
         if not isinstance(stage, str) or stage not in {"prefilter", "baseline", "finalists", "complete"}:
             raise ValueError("Invalid staged checkpoint stage")
@@ -267,7 +283,7 @@ class StagedTester:
         for key, count in archived.items():
             if type(count) is not int or not 1 <= count <= self.config.scan.finalist_retries:
                 raise ValueError("Invalid staged checkpoint completed finalist attempts")
-            if not self._baseline_result(self._results[key]).strict_eligible:
+            if not self._baseline_result(self._results[key]).quality_eligible:
                 raise ValueError("Completed finalist did not qualify in the baseline")
         if (
             sum(count < self.config.scan.finalist_retries for count in archived.values())
@@ -293,7 +309,7 @@ class StagedTester:
             value = attempts[key]
             if type(value) is not int or not 0 <= value <= budget:
                 raise ValueError("Invalid staged checkpoint finalist attempt count")
-            if not self._baseline_result(self._results[key]).strict_eligible:
+            if not self._baseline_result(self._results[key]).quality_eligible:
                 raise ValueError("Checkpoint finalist did not qualify in the baseline")
             self._finalist_attempts[key] = value
         baseline_budget = self.config.testing.retries
@@ -485,6 +501,21 @@ class StagedTester:
             min(scan.finalist_workers, self.config.testing.mtproto_workers, self.config.testing.workers),
             len(proxies),
         )
+        if self.config.scoring.policy == "v2-experimental":
+            # Barrier between rounds: no fast endpoint can finish all reconnects
+            # before a slow endpoint has had its next turn. The seed is saved so
+            # a stopped round keeps the same admission order after resume.
+            async def one_round(proxy):
+                if scan.finalist_reconnect_delay_seconds:
+                    await asyncio.sleep(scan.finalist_reconnect_delay_seconds)
+                await self._strict_attempt(proxy, finalist=True)
+
+            for round_number in range(scan.finalist_retries):
+                order = list(proxies)
+                random.Random(self._round_seed + round_number).shuffle(order)
+                pending = [proxy for proxy in order if self._finalist_attempts[proxy.key()] <= round_number]
+                await self._pool(pending, workers, one_round, deadline=self._deadline)
+            return
         await self._pool(proxies, workers, test, deadline=self._deadline)
 
     def _baseline_coverage_complete(self) -> bool:

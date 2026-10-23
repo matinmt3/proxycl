@@ -9,6 +9,7 @@ import secrets
 import threading
 import time
 import uuid
+from pathlib import Path
 
 from config.loader import ScanConfig
 
@@ -65,7 +66,7 @@ class ScanController:
         }:
             raise ControlError("Unknown scan options")
         action = body.get("action")
-        if action not in ("start", "stop", "resume", "recheck"):
+        if action not in ("start", "stop", "resume", "recheck", "favourites"):
             raise ControlError("Choose start, stop, resume or recheck")
         mode = body.get("mode", "mtproto")
         if mode not in MODES:
@@ -83,7 +84,9 @@ class ScanController:
         minutes = body.get("minutes")
         if minutes is not None and (type(minutes) is not int or minutes not in (3, 10, 20)):
             raise ControlError("Choose a 3, 10 or 20 minute scan")
-        if action in ("stop", "resume", "recheck") and (minutes is not None or limit is not None):
+        if action in ("stop", "resume", "recheck", "favourites") and (
+            minutes is not None or limit is not None
+        ):
             raise ControlError("Count and time are available for a new scan only")
         if "command" in body and (action != "resume" or body["command"] not in ("best10", "recheck")):
             raise ControlError("Resume target must be a scan or a recheck")
@@ -101,9 +104,18 @@ class ScanController:
                 return dict(self._job)
             if active:
                 raise ControlError("A scan is already running; stop it before starting another", 409)
-            config = copy.deepcopy(self._config)
+            from utils.user_sources import apply_user_sources
+
+            config = apply_user_sources(copy.deepcopy(self._config))
             config.scan.network = network
             config.scan.resume = action == "resume"
+            if action == "favourites":
+                from utils.favourites import FavouriteStore
+
+                config._favourite_proxies = FavouriteStore(config).proxies(mode, network)
+                if not config._favourite_proxies:
+                    raise ControlError("No favourites saved for this mode and network")
+                config.scan.time_budget_seconds = None
             if action == "start":
                 # ALL/custom count are explicitly untimed, even when the
                 # dashboard was launched with a CLI/config time budget.
@@ -141,6 +153,125 @@ class ScanController:
                 self._worker = None
                 raise ControlError("Could not start a scan worker", 503) from exc
             return dict(self._job)
+
+    def library(self, body):
+        """Authenticated local actions. No filenames, shell commands or account fields."""
+        from dashboard import data
+        from utils.favourites import FavouriteStore
+        from utils.process_lock import OutputRootBusy
+        from utils.scan_state import deserialize_proxy
+        from utils.user_sources import SourceStore, canonical_mode
+
+        schemas = {
+            "list": {"action", "mode", "network"},
+            "source_export": {"action"},
+            "source_import": {"action", "document"},
+            "source_add": {"action", "mode", "name", "url", "type", "protocol"},
+            "source_manual": {"action", "mode", "name", "text"},
+            "source_toggle": {"action", "id", "enabled"},
+            "favourite_add": {"action", "mode", "network", "rank"},
+            "favourite_remove": {"action", "id"},
+            "favourite_recheck": {"action", "mode", "network"},
+            "doctor": {"action"},
+            "media_report": {"action", "mode", "network"},
+        }
+        if (
+            not isinstance(body, dict)
+            or not isinstance(body.get("action"), str)
+            or body["action"] not in schemas
+            or set(body) - schemas[body["action"]]
+        ):
+            raise ControlError("Unknown personal-library options")
+        action = body["action"]
+        try:
+            mode = body.get("mode", "mtproto")
+            canonical_mode(mode)
+            network = ScanConfig(network=body.get("network", self._config.scan.network)).validate().network
+            sources = SourceStore(self._config)
+            favourites = FavouriteStore(self._config)
+            if action == "favourite_recheck":
+                return {"job": self.request({"action": "favourites", "mode": mode, "network": network})}
+            with self._lock:
+                if self._closed:
+                    raise ControlError("Dashboard controls have stopped", 409)
+                if (
+                    action not in {"list", "source_export", "doctor", "media_report"}
+                    and self._worker is not None
+                    and self._worker.is_alive()
+                ):
+                    raise ControlError("Stop the active scan before changing personal data", 409)
+                if action == "list":
+                    return {"sources": sources.list(mode), "favourites": favourites.list(mode, network)}
+                if action == "source_export":
+                    return {"document": sources.export_document()}
+                if action == "doctor":
+                    from utils.doctor import collect_diagnostics
+
+                    return {"document": collect_diagnostics(self._config)}
+                if action == "media_report":
+                    from media_test.report import read_report
+                    from scan import mode_folder
+
+                    prepared = copy.copy(self._config)
+                    prepared.scan = copy.copy(self._config.scan)
+                    prepared.scan.network = network
+                    report = read_report(mode_folder(prepared, mode) / "media-report.json")
+                    if report is not None and report.get("network_profile") != network:
+                        report = None
+                    if report is not None:
+                        report["results"] = [
+                            row for row in report["results"] if row["network_profile"] == network
+                        ]
+                        identities = {row["candidate_id"] for row in report["results"]}
+                        report["ranked_candidate_ids"] = [
+                            identity for identity in report["ranked_candidate_ids"] if identity in identities
+                        ]
+                    return {"report": report}
+                if action == "source_import":
+                    return {"imported": sources.import_document(body.get("document"))}
+                if action == "source_add":
+                    return {
+                        "added": sources.add_feed(
+                            mode,
+                            body.get("name"),
+                            body.get("url"),
+                            body.get("type", "http_txt"),
+                            body.get("protocol", "http"),
+                        )
+                    }
+                if action == "source_manual":
+                    return {
+                        "added": sources.import_manual(
+                            mode, body.get("text"), body.get("name", "Personal links")
+                        )
+                    }
+                if action == "source_toggle":
+                    sources.set_enabled(body.get("id"), body.get("enabled"))
+                    return {"saved": True}
+                if action == "favourite_remove":
+                    return {"removed": favourites.remove(body.get("id"))}
+                rank = body.get("rank")
+                if type(rank) is not int or not 1 <= rank <= 10:
+                    raise ControlError("Choose one of the current top ten results")
+                current = data.api_response(
+                    "/api/snapshot", Path(self._config.output.folder), {"mode": [mode], "network": [network]}
+                )
+                row = next((row for row in current["rows"] if row["rank"] == rank), None)
+                if row is None or row.get("evidence_status") != "fresh":
+                    raise ControlError("Recheck this candidate before saving a favourite")
+                kind = "mtproto" if mode in {"mtproto", "telegram"} else mode
+                proxy = deserialize_proxy(
+                    {**row, "kind": kind, "protocol": "mtproto" if kind == "mtproto" else row.get("protocol")}
+                )
+                return {"id": favourites.add(proxy, mode, network)}
+        except OutputRootBusy as exc:
+            raise ControlError(str(exc), 409) from exc
+        except (ValueError, TypeError, OSError) as exc:
+            if isinstance(exc, ControlError):
+                raise
+            raise ControlError(
+                str(exc) if isinstance(exc, ValueError) else "Personal data could not be accessed"
+            ) from exc
 
     def _run(self, config, mode, limit, command, resume, stop_event):
         failed = False

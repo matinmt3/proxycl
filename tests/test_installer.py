@@ -62,7 +62,7 @@ if [[ "$1" == clone ]]; then
     printf '%s\\n' "$branch" > "$destination/.test-branch"
     [[ "${MOCK_FAIL:-}" != clone ]] || { touch -- "$destination/partial-download"; exit 23; }
     case "${MOCK_LAYOUT:-root}" in
-        root) touch -- "$destination/main.py" "$destination/requirements-lite.txt" ;;
+        root) touch -- "$destination/main.py" "$destination/requirements-lite.txt" "$destination/launcher.py" "$destination/update_bootstrap.py" ;;
         nested) mkdir -p -- "$destination/TelegramProxySelector"; touch -- "$destination/TelegramProxySelector/main.py" "$destination/TelegramProxySelector/requirements-lite.txt" ;;
         missing) touch -- "$destination/README.md" ;;
         *) exit 94 ;;
@@ -87,7 +87,11 @@ if [[ "$1" == -m && "$2" == pip ]]; then
 elif [[ "$1" == -c ]]; then
     [[ -f main.py ]] || exit 99
     [[ "${MOCK_FAIL:-}" != runtime ]] || exit 27
-elif [[ "$*" == main.py ]]; then
+elif [[ "$1" == */update_bootstrap.py ]]; then
+    [[ $# == 3 && -f "$2/main.py" ]] || exit 104
+    [[ "${MOCK_FAIL:-}" != update ]] || exit 28
+    touch -- "$2/launcher.py"
+elif [[ "$*" == main.py || "$*" == launcher.py ]]; then
     [[ -f main.py ]] || exit 100
     printf 'launch-cwd\\t%s\\n' "$PWD" >> "$MOCK_LOG"
     if command -v cygpath >/dev/null 2>&1; then
@@ -201,7 +205,8 @@ class OfflineInstall:
 
     def assert_launched(self, expected_exit=0, layout="root"):
         assert self.result.returncode == expected_exit, self.result.stderr
-        assert self.calls("python", "main.py") == [["main.py"]]
+        entrypoint = "main.py" if layout == "nested" else "launcher.py"
+        assert self.calls("python", entrypoint) == [[entrypoint]]
         assert ["menu-input", "5"] in self.events
         app = self.target / "TelegramProxySelector" if layout == "nested" else self.target
         # Git Bash mounts Windows TEMP as /tmp. A relative cd can retain that
@@ -212,6 +217,7 @@ class OfflineInstall:
         assert Path(launch_directories[0]).samefile(app), (launch_directories[0], str(app))
         assert not (self.cwd / "Revmamad").exists()
         assert not list(self.target.parent.glob(self.target.name + ".install.*"))
+        assert not list(self.target.parent.glob(self.target.name + ".update.*"))
 
 
 @pytest.fixture
@@ -240,14 +246,28 @@ def test_fresh_install_and_keyboard_input(offline_install, layout):
 
 
 @pytest.mark.parametrize("gitfile", [False, True])
-@pytest.mark.parametrize("layout", ["root", "nested"])
-def test_existing_checkout_updates_without_losing_files(offline_install, gitfile, layout):
+def test_existing_checkout_updates_without_losing_files(offline_install, gitfile):
     run = offline_install
-    run.checkout(layout=layout, gitfile=gitfile)
-    run.run(layout=layout)
-    run.assert_launched(layout=layout)
-    assert not run.calls("git", "clone")
-    assert run.calls("git", "pull") == [["pull", "--ff-only", "--", "origin", "main"]]
+    run.checkout(gitfile=gitfile)
+    run.run()
+    run.assert_launched()
+    clone = run.calls("git", "clone")[0]
+    assert clone[-1].startswith(shell_path(run.target) + ".update.")
+    assert not run.calls("git", "pull")
+    assert not run.calls("pkg", "update") and not run.calls("pkg", "install")
+    bootstrap = [e for e in run.events if e[0] == "python" and e[1].endswith("/update_bootstrap.py")]
+    assert len(bootstrap) == 1 and bootstrap[0][-2:] == [shell_path(run.target), "main"]
+    assert (run.target / "user-note.txt").read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.parametrize("gitfile", [False, True])
+def test_legacy_nested_upgrade_keeps_existing_data_and_requests_separate_install(offline_install, gitfile):
+    run = offline_install
+    run.checkout(layout="nested", gitfile=gitfile)
+    run.run(layout="nested")
+    assert run.result.returncode == 1
+    assert "separate v4 installation" in run.result.stderr
+    assert not run.calls("pkg", "update") and not run.calls("git", "clone")
     assert (run.target / "user-note.txt").read_text(encoding="utf-8") == "keep"
 
 
@@ -279,15 +299,19 @@ def test_conflicting_checkout_fails_before_package_changes(offline_install, kind
     assert not run.calls("python", "main.py")
 
 
-@pytest.mark.parametrize("failure", ["pkg_update", "pkg_install", "clone", "pull", "pip", "runtime"])
+@pytest.mark.parametrize("failure", ["pkg_update", "pkg_install", "clone", "update", "pip", "runtime"])
 def test_failed_install_stage_never_launches_menu(offline_install, failure):
     run = offline_install
-    if failure == "pull":
+    if failure == "update":
         run.checkout()
     run.run(failure=failure)
     assert run.result.returncode == 1
     assert not run.calls("python", "main.py")
+    assert not run.calls("python", "launcher.py")
     assert not list(run.target.parent.glob(run.target.name + ".install.*"))
+    assert not list(run.target.parent.glob(run.target.name + ".update.*"))
+    if failure == "update":
+        assert (run.target / "user-note.txt").read_text(encoding="utf-8") == "keep"
     if failure == "clone":
         assert not run.target.exists()
 

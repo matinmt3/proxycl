@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -192,9 +193,22 @@ def _rows(rows: list, mode: str, profile: str = "transport") -> list[dict]:
             continue
         item = dict(row)
         item["rank"] = index
+        try:
+            from utils.scan_state import deserialize_proxy
+
+            family = "mtproto" if mode in {"mtproto", "telegram"} else mode
+            candidate = deserialize_proxy(
+                {**row, "kind": family, "protocol": "mtproto" if family == "mtproto" else row.get("protocol")}
+            )
+            item["candidate_id"] = hashlib.sha256(candidate.key().encode()).hexdigest()
+        except (ValueError, TypeError):
+            item["candidate_id"] = None
         for field in (*SORT_FIELDS, "timeout_rate", "median_latency_ms", "jitter_ms", *SESSION_METRICS):
             item[field] = number(row.get(field))
         item["source"] = str(row.get("source") or "unknown")
+        expiry = number(row.get("evidence_expires_at"))
+        now = datetime.now(timezone.utc).timestamp()
+        item["evidence_status"] = "missing" if expiry is None else "fresh" if expiry > now else "expired"
         if mode != "web":
             qualified = profile == "telegram_session" and _strict_qualified(row)
             item["verification_profile"] = "telegram_session" if qualified else "transport"
@@ -229,6 +243,10 @@ def _rows(rows: list, mode: str, profile: str = "transport") -> list[dict]:
                     item.pop(key)
             item["verification_profile"] = "web"
             item["uri"] = _safe_action(row, mode)
+        if item["evidence_status"] != "fresh":
+            for action in ("uri", "tg_link", "web_link"):
+                if action in item:
+                    item[action] = None
         result.append(item)
     return result
 
@@ -444,10 +462,29 @@ def _saved_snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
                     if value is None or value < 0:
                         raise ValueError("Invalid source cooldown")
                     safe[key] = value
-            if report.get("quality_attribution") == "first_source_after_deduplication":
+            if report.get("quality_attribution") in {
+                "first_source_after_deduplication",
+                "all_memberships_non_additive",
+            }:
                 safe["quality_attribution"] = report["quality_attribution"]
+            for key in ("source_id", "publisher_id", "content_id"):
+                value = report.get(key)
+                if value is not None and (
+                    not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value)
+                ):
+                    raise ValueError("Invalid source provenance")
+                safe[key] = value
+            safe["fetched"] = report.get("fetched") is True
+            for key in ("parsed_unique", "mirror_count"):
+                value = report.get(key, 0)
+                if type(value) is not int or not 0 <= value <= 1_000_000:
+                    raise ValueError("Invalid source provenance count")
+                safe[key] = value
             reports.append(safe)
         rows = _rows(raw["rows"], mode, profile)
+        if raw["summary"].get("provisional"):
+            for row in rows:
+                row["provisional"] = True
         if len(rows) != len(raw["rows"]):
             raise ValueError("Invalid snapshot row")
         if raw["summary"]["eligible"] != len(rows) or raw["summary"]["displayed"] != min(10, len(rows)):
@@ -686,7 +723,11 @@ def _progress(folder, mode, network):
             or type(raw.get("resumable")) is not bool
         ):
             raise ValueError("Invalid progress metadata")
-        if age > (PROGRESS_MAX_AGE_SECONDS if raw["active"] else 86400):
+        from utils.process_lock import output_root_busy
+
+        root = folder.parent.parent if folder.parent.name == "networks" else folder
+        orphaned = raw["active"] and not output_root_busy(root)
+        if age > (7 * 86400 if orphaned else PROGRESS_MAX_AGE_SECONDS if raw["active"] else 86400):
             return None, "stale"
         for key in ("completed", "total", "qualified"):
             if type(raw.get(key)) is not int or not 0 <= raw[key] <= 1_000_000:
@@ -699,7 +740,7 @@ def _progress(folder, mode, network):
         command = raw.get("command", "best10")
         if command not in ("best10", "recheck"):
             raise ValueError("Invalid progress command")
-        return {
+        result = {
             key: raw[key]
             for key in (
                 "version",
@@ -714,7 +755,10 @@ def _progress(folder, mode, network):
                 "active",
                 "resumable",
             )
-        } | {"remaining_seconds": remaining, "command": command}, "ready"
+        } | {"remaining_seconds": remaining, "command": command, "recovery_needed": orphaned}
+        if orphaned:
+            result.update(active=False, stage="stopped", remaining_seconds=None)
+        return result, "ready"
     except (ValueError, TypeError, OverflowError):
         return None, "corrupt"
 

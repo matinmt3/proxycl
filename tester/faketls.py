@@ -96,3 +96,13 @@ def wrap_tls_payload(payload: bytes, first: bool = False) -> bytes:
         raise ValueError("Invalid FakeTLS payload size")
     record = b"\x17\x03\x03" + struct.pack(">H", len(payload)) + payload
     return (CHANGE_CIPHER_SPEC if first else b"") + record
+
+
+def wrap_tls_stream(payload: bytes, first: bool = False) -> bytes:
+    """Fragment a bounded transport write into canonical TLS application records."""
+    if not payload:
+        raise ValueError("Empty FakeTLS payload")
+    return b"".join(
+        wrap_tls_payload(payload[offset : offset + TLS_MAX_RECORD], first=first and offset == 0)
+        for offset in range(0, len(payload), TLS_MAX_RECORD)
+    )

@@ -218,9 +218,7 @@ async def test_cancelled_collection_does_not_publish_or_persist_partial_health(t
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["mtproto", "web"])
-async def test_quality_counts_only_first_deduplicated_source_and_finished_results(
-    tmp_path, monkeypatch, mode
-):
+async def test_quality_counts_every_membership_once_and_only_finished_results(tmp_path, monkeypatch, mode):
     config = config_for(tmp_path)
     source_class = WebSourceConfig if mode == "web" else SourceConfig
     setattr(
@@ -248,13 +246,13 @@ async def test_quality_counts_only_first_deduplicated_source_and_finished_result
         ProxyResult(WebProxy("2.2.2.2", 8080)) if mode == "web" else ProxyResult(Proxy("2.2.2.2", 443, KEY))
     )
     reports = collector.record_quality([result, result, unknown])
-    assert [r["checked"] for r in reports] == [1, 0]
-    assert [r["qualified"] for r in reports] == [1, 0]
-    assert [r["strict_qualified"] for r in reports] == ([0, 0] if mode == "web" else [1, 0])
-    assert reports[0]["quality_attribution"] == "first_source_after_deduplication"
+    assert [r["checked"] for r in reports] == [1, 1]
+    assert [r["qualified"] for r in reports] == [1, 1]
+    assert [r["strict_qualified"] for r in reports] == ([0, 0] if mode == "web" else [1, 1])
+    assert reports[0]["quality_attribution"] == "all_memberships_non_additive"
     restored = SourceHealth(config, mode)
     rows = restored.rows(getattr(config, "web_sources" if mode == "web" else "sources"))
-    assert rows[0]["checked"] == 1 and rows[1]["checked"] == 0
+    assert rows[0]["checked"] == 1 and rows[1]["checked"] == 1
     assert KEY not in restored.path.read_text(encoding="utf-8")
 
 

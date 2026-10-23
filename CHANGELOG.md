@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.0.0-rc.1 — 2026-10-23 (prerelease)
+
+- Add OS-backed cross-process output ownership, crash recovery hints, redacted `doctor` diagnostics, personal settings and staged `update`/`update --rollback` with runtime validation and user-file collision protection.
+- Version evidence and ranking policies; enforce expiry during selection, rendering, copying and export. Add experimental interleaved finalist rounds, within-session jitter/interconnection drift and a paired-calibration ledger. Keep v1 ranking the default pending field evidence.
+- Retain all source memberships, detect identical feed content and distinguish known publisher accounts from unknown publishers. Add personal feeds/manual links, backups and network-scoped favourites with fresh strict rechecks.
+- Add three Persian RTL dashboard groups, an MTProto share-format selector, dark/light themes, touch controls, validity explanations and read-only media reports. Fix stale library responses overwriting source mutations.
+- Add the optional Telethon 1.45.0 media adapter: terminal-only credentials, MemorySession, pinned proxy routing across DCs, no history/dialog access or CDN/direct fallback, two bounded downloads and independent redacted ranking. Count cancelled partial reads and report logout confirmation.
+- Validate the official WEB relay through real local TLS, four carriers at root/subpath, large transfers and forced reconnects. Preserve the experimental label.
+- Physical Android, real account transfer, real WEB client and 18 paired trials across three days/two networks remain open stable-release gates.
+
 ## 3.4.0 — 2026-10-23
 
 - Add the separate Telegram WEB relay mode, canonical raw/dd/base-path share links, manual import and bounded discovery. Implement the official HTTPS, HTTPS lanes, WebSocket and WebSocket lanes contract without executing downloaded bridge scripts. Run the existing authenticated Telegram proof through the relay; an HTTP response or WSS upgrade cannot qualify links. Document native TLS/WebView and client-link compatibility limits.

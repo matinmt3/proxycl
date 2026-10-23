@@ -45,6 +45,7 @@ scan:
 
 # Scoring weights (must sum to 1.0, values are checked/normalized at runtime)
 scoring:
+  policy: v1             # v2-experimental requires explicit opt-in; calibration gate is not met
   latency_weight: 0.35
   success_rate_weight: 0.35
   stability_weight: 0.20
@@ -56,6 +57,7 @@ scoring:
 
 # Output / export
 output:
+  proof_max_age_minutes: 30  # oldest finished sample expires; history never renews proof
   folder: "output"
   min_score: 0.0
   max_latency_ms: 5000

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from collector.health import SourceHealth, quality_counts, source_identity
+from collector.provenance import merge_groups
 from webproxy.models import WebProxy
 from webproxy.sources import parse_json_feed, parse_text_blob
 
@@ -25,7 +26,7 @@ class WebCollector:
         self.source_reports: list[dict] = []
         self.health = SourceHealth(config, "web")
         self._enabled_sources = []
-        self._source_by_proxy: dict[str, str] = {}
+        self._source_by_proxy: dict[str, list[str]] = {}
         self._collection_completed = False
 
     @property
@@ -44,7 +45,7 @@ class WebCollector:
                 if identity not in seen
                 else {"checked": 0, "qualified": 0, "strict_qualified": 0}
             )
-            report["quality_attribution"] = "first_source_after_deduplication"
+            report["quality_attribution"] = "all_memberships_non_additive"
             seen.add(identity)
         self.health.record_quality(self._enabled_sources, counts)
         return self.source_reports
@@ -86,12 +87,18 @@ class WebCollector:
                 if cooldown is not None:
                     return [], cooldown
                 async with semaphore:
+                    fetched = False
                     try:
                         text = (
-                            await self._read_local_file(source.url)
-                            if source.url.startswith("file://")
-                            else await self._fetch_url(client, source.url)
+                            source._manual_text
+                            if hasattr(source, "_manual_text")
+                            else (
+                                await self._read_local_file(source.url)
+                                if source.url.startswith("file://")
+                                else await self._fetch_url(client, source.url)
+                            )
                         )
+                        fetched = True
                         parser = (
                             parse_json_feed
                             if source.type in {"http_json", "json_feed", "github_raw"}
@@ -102,6 +109,7 @@ class WebCollector:
                             "name": source.name,
                             "status": "ok" if proxies else "empty",
                             "count": len(proxies),
+                            "fetched": True,
                         }
                     except Exception as exc:
                         detail = type(exc).__name__
@@ -112,6 +120,7 @@ class WebCollector:
                             "name": source.name,
                             "status": "error",
                             "count": 0,
+                            "fetched": fetched,
                             "error": detail,
                             "_health_network_error": isinstance(exc, (httpx.HTTPError, OSError)),
                         }
@@ -121,10 +130,7 @@ class WebCollector:
         reports = [report for _, report in groups]
         network_errors = [bool(report.pop("_health_network_error", False)) for report in reports]
         self.health.record_collection(enabled, reports, network_errors)
-        for source, (proxies, report) in zip(enabled, groups):
-            for proxy in proxies:
-                unique.setdefault(proxy.key(), proxy)
-                self._source_by_proxy.setdefault(proxy.key(), source_identity(source))
+        unique, self._source_by_proxy = merge_groups(enabled, [group for group, _ in groups], reports)
         self.source_reports = reports
         self._enabled_sources = enabled
         self._collection_completed = True

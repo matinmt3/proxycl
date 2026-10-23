@@ -1,6 +1,7 @@
 import json
 import sys
 import threading
+import time
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
@@ -206,9 +207,9 @@ def test_equal_score_and_latency_use_the_full_transport_endpoint_key(tmp_path):
             },
         ],
     )
-    assert [row["uri"] for row in data.proxies(tmp_path, mode="web")] == [
-        "http://z.example:80",
-        "socks5://a.example:1080",
+    assert [(row["protocol"], row["server"], row["port"]) for row in data.proxies(tmp_path, mode="web")] == [
+        ("http", "z.example", 80),
+        ("socks5", "a.example", 1080),
     ]
     assert data.stats(tmp_path, mode="web")["best_proxy"]["server"] == "z.example"
     rows = [
@@ -334,6 +335,8 @@ def test_actions_are_allowlisted_endpoint_matched_and_mode_specific(tmp_path):
         },
         {"server": "safe.example", "port": 80, "protocol": "http", "uri": "http://safe.example:80"},
     ]
+    for row in rows:
+        row["evidence_expires_at"] = time.time() + 3600
     write_snapshot(tmp_path, "web", rows)
     safe = data.snapshot(tmp_path, "web")["rows"]
     assert all("tg_link" not in row for row in safe)

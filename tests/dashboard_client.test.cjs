@@ -44,7 +44,7 @@ function client() {
 
 function strongRow(extra = {}) {
   return {
-    server: "proxy.example", port: 443, source: "fixture", rank: 1,
+    server: "proxy.example", port: 443, source: "fixture", rank: 1, evidence_expires_at: Date.now() / 1000 + 1800,
     secret: "00112233445566778899aabbccddeeff",
     tg_link: "tg://proxy?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff",
     verification_profile: "telegram_session", strict_eligible: true,
@@ -95,10 +95,10 @@ test("WEB direct app action and HTTPS copy stay distinct and show compatibility 
   context.row = webRow();
   const card = vm.runInContext("resultCard(row)", context);
   const text = allText(card);
-  assert.match(text, /Connect Telegram WEB/);
-  assert.match(text, /Copy WEB HTTPS link/);
-  assert.match(text, /Requires a Telegram client with WEB proxy support/);
-  assert.match(text, /HTTPS link may not open correctly/);
+  assert.match(text, /اتصال Telegram WEB/);
+  assert.match(text, /کپی لینک HTTPS وب/);
+  assert.match(text, /تلگرام سازگار با WEB/);
+  assert.match(text, /لینک HTTPS.*درست باز نشود/);
   assert.doesNotMatch(text, /relay.example\/base\/path:443/);
 });
 
@@ -122,13 +122,13 @@ test("invalid control fields never become shell commands or scan payloads", () =
   element("control-scope").value = "all";
   for (const network of ["../mobile", "CON", "wifi;echo", "", "a".repeat(33)]) {
     element("control-network").value = network;
-    assert.throws(() => vm.runInContext("controlPayload('start')", context), /network name/);
+    assert.throws(() => vm.runInContext("controlPayload('start')", context), /نام شبکه/);
   }
   element("control-network").value = "wifi";
   element("control-scope").value = "count";
   for (const count of ["0", "1000001", "1.5", "25;echo", ""]) {
     element("control-count").value = count;
-    assert.throws(() => vm.runInContext("controlPayload('start')", context), /candidate count/);
+    assert.throws(() => vm.runInContext("controlPayload('start')", context), /تعداد باید/);
   }
 });
 
@@ -147,11 +147,11 @@ test("single active job disables new scans and only its matching scope can stop"
 test("plain quality reasons describe observed reconnect and latency limits", () => {
   const {context} = client();
   context.row = strongRow({attempts: 8, strict_successes: 7});
-  assert.match(vm.runInContext("qualityReason(row, true)", context), /reconnect failure/);
+  assert.match(vm.runInContext("qualityReason(row, true)", context), /شکست اتصال مجدد/);
   context.row = strongRow({telegram_p95_ms: 1000});
-  assert.match(vm.runInContext("qualityReason(row, true)", context), /slower Telegram/);
+  assert.match(vm.runInContext("qualityReason(row, true)", context), /پاسخ تلگرام کندتر/);
   context.row = strongRow();
-  assert.match(vm.runInContext("qualityReason(row, true)", context), /short sample/);
+  assert.match(vm.runInContext("qualityReason(row, true)", context), /نمونهٔ کوتاه/);
 });
 
 test("strict cards show encrypted Telegram RTT and counts rather than download speed", () => {
@@ -161,8 +161,8 @@ test("strict cards show encrypted Telegram RTT and counts rather than download s
   const text = allText(card);
   assert.match(text, /Telegram RTT p95.*120 ms/);
   assert.match(text, /3\s*\/\s*3/);
-  assert.match(text, /Probe duration.*2000 ms/);
-  assert.match(text, /9 matched pongs/);
+  assert.match(text, /مدت آزمون.*2000 ms/);
+  assert.match(text, /9 پاسخ پینگ معتبر/);
   assert.doesNotMatch(text, /download|Mbps|MB\/s|Speed:/i);
 });
 
@@ -184,9 +184,9 @@ test("legacy snapshot is transport evidence and requests a strict rescan", () =>
   const {context, element} = client();
   context.current = {state: "ready", summary: {verified: 1}, source_reports: [], rows: [strongRow({verification_profile: undefined, strict_policy: undefined, attempts: 1, successes: 1})]};
   vm.runInContext("render(current, true)", context);
-  assert.match(element("verification-status").textContent, /transport.*re-scan/i);
+  assert.match(element("verification-status").textContent, /شواهد اتصال.*دوباره آزمون/);
   const text = allText(element("results"));
-  assert.match(text, /insufficient samples/i);
+  assert.match(text, /نمونه کافی نیست/);
   assert.doesNotMatch(text, /Telegram session verified/);
   assert.equal(element("count-verified").textContent, "0");
 });
@@ -205,7 +205,7 @@ test("a strict snapshot label cannot promote missing proof into counters or badg
     rows: [strongRow({strict_policy: undefined})]};
   vm.runInContext("render(current, true)", context);
   assert.equal(element("count-verified").textContent, "0");
-  assert.match(element("verification-status").textContent, /invalid.*strict/i);
+  assert.match(element("verification-status").textContent, /آزمون دقیق معتبر نیست/);
   assert.equal(element("results").children.length, 0);
 });
 
@@ -218,7 +218,7 @@ test("web copy actions accept default ports, SOCKS and IPv6", () => {
     {server: "proxy.example", port: 1080, protocol: "socks5", uri: "socks5://proxy.example:1080"},
     {server: "2001:db8::1", port: 8080, protocol: "http", uri: "http://[2001:db8::1]:8080"},
   ]) {
-    context.row = row;
+    context.row = {...row, evidence_expires_at: Date.now() / 1000 + 1800};
     assert.equal(vm.runInContext("safeConnection(row)", context), row.uri);
   }
 });
@@ -265,7 +265,7 @@ test("refresh replaces same-count, same-second snapshots and source health", () 
     source_reports: [{name: "feed", status: "ok", count: 9}]};
   vm.runInContext("render(current)", context);
   assert.equal(element("results").children[0].children[0].children[1].children[0].textContent, "second.example:443");
-  assert.equal(element("source-list").children[0].textContent, "feed · ok · 9 candidates");
+  assert.equal(element("source-list").children[0].textContent, "feed · ok · 9 نامزد");
   context.current.summary.run_id = "one";
   vm.runInContext("render(current)", context);
   context.current.summary.run_id = "two";
@@ -277,7 +277,7 @@ test("Telegram Web Link uses matched HTTPS share links and never HTTP proxy URIs
   const {context, element} = client();
   vm.runInContext("selectMode('telegram')", context);
   assert.equal(vm.runInContext("mode", context), "telegram");
-  assert.match(element("mode-title").textContent, /Telegram/);
+  assert.match(element("mode-title").textContent, /MTProto/);
   assert.equal(element("protocol-field").hidden, true);
   context.row = strongRow({server: "proxy.example", port: 443, secret: "00112233445566778899aabbccddeeff",
     web_link: "https://t.me/proxy?server=proxy.example&port=443&secret=00112233445566778899aabbccddeeff",
@@ -289,10 +289,10 @@ test("Telegram Web Link uses matched HTTPS share links and never HTTP proxy URIs
   }
 });
 
-test("four keyboard tabs cycle and the HTTP/SOCKS mode keeps its own labels", () => {
+test("three RTL keyboard tabs cycle and legacy share format remains supported", () => {
   const {context, element} = client();
   const arrow = {key: "ArrowRight", preventDefault() {}};
-  for (const expected of ["telegram", "webproxy", "web", "mtproto"]) {
+  for (const expected of ["web", "webproxy", "mtproto"]) {
     const current = vm.runInContext("mode", context);
     element(`tab-${current}`).listeners.keydown(arrow);
     assert.equal(vm.runInContext("mode", context), expected);
@@ -310,12 +310,12 @@ test("interrupted scans display partial results and skipped candidates accuratel
     rows: [{rank: 1, server: "partial.example", port: 443, source: "feed", score: .8}], source_reports: []};
   vm.runInContext("render(current, true)", context);
   assert.equal(element("partial-note").hidden, false);
-  assert.match(element("partial-note").textContent, /Stopped scan.*partial results/i);
-  assert.match(element("scan-meta").textContent, /Skipped: 5/);
-  assert.match(element("scan-time-label").textContent, /STOPPED/);
+  assert.match(element("partial-note").textContent, /اسکن متوقف شد.*موقت/);
+  assert.match(element("scan-meta").textContent, /آزموده‌نشده: 5/);
+  assert.match(element("scan-time-label").textContent, /توقف/);
   assert.equal(element("count-tested").textContent, "3");
-  assert.equal(element("tested-description").textContent, "Candidates with samples");
-  assert.match(element("results-title").textContent, /partial/i);
+  assert.equal(element("tested-description").textContent, "نامزدهای دارای نمونه");
+  assert.match(element("results-title").textContent, /موقت/);
 });
 
 test("Telegram share links require a valid row secret and matching decoded identity", () => {
@@ -348,10 +348,10 @@ test("live stage updates even while the saved result run ID stays the same", () 
   const {context, element} = client();
   context.current = {state: "missing", rows: [], summary: {run_id: "same"}, source_reports: [], network: "mobile", progress: liveProgress()};
   vm.runInContext("render(current)", context);
-  assert.match(element("progress-label").textContent, /Sustained finalist/);
-  assert.match(element("progress-meta").textContent, /2 \/ 20.*1 qualified.*About 2 min/);
+  assert.match(element("progress-label").textContent, /بازآزمایی پایدار/);
+  assert.match(element("progress-meta").textContent, /2 \/ 20.*1 واجد شرایط.*حدود 2 دقیقه/);
   assert.equal(element("scan-progress").value, 2);
-  assert.equal(element("network-label").textContent, "Network: mobile");
+  assert.equal(element("network-label").textContent, "شبکه: mobile");
   context.current.progress.completed = 3;
   vm.runInContext("render(current)", context);
   assert.equal(element("scan-progress").value, 3);
@@ -374,7 +374,7 @@ test("stale heartbeat is never shown as an active scan or resumable instruction"
   const {context, element} = client();
   context.current = {state: "missing", rows: [], summary: {}, source_reports: [], network: "mobile", progress_state: "stale", progress: liveProgress({updated_at: new Date(Date.now() - 600000).toISOString()})};
   vm.runInContext("render(current)", context);
-  assert.match(element("progress-meta").textContent, /heartbeat expired/);
+  assert.match(element("progress-meta").textContent, /پیام فعالیت قدیمی/);
   assert.equal(element("copy-resume").hidden, true);
   assert.equal(element("scan-progress").value, 0);
 });
@@ -390,7 +390,7 @@ test("history is plain past evidence and cannot create connection actions", () =
   vm.runInContext("render(current)", context);
   const history = element("history-list");
   assert.equal(history.children.length, 1);
-  assert.match(allText(history), /qualified at that time.*14 \/ 16 across 2 runs/);
+  assert.match(allText(history), /در آن زمان واجد شرایط.*14 \/ 16 در 2 اجرا/);
   assert.equal(history.children[0].children.length, 0);
   assert.equal(element("results").children.length, 0);
 });
@@ -406,7 +406,7 @@ test("staged labels never promote baseline evidence below the final policy", () 
   vm.runInContext("render(current, true)", context);
   assert.equal(element("count-verified").textContent, "0");
   assert.equal(element("results").children.length, 0);
-  assert.match(element("partial-note").textContent, /PROVISIONAL: sustained finalist testing is incomplete/);
+  assert.match(element("partial-note").textContent, /موقت: بازآزمایی پایدار نهایی کامل نشده/);
 });
 
 test("source quality and cooldown remain visible with attribution counts", () => {
@@ -415,6 +415,99 @@ test("source quality and cooldown remain visible with attribution counts", () =>
     {name: "feed", status: "error", count: 0, checked: 9, qualified: 2, cooldown_until: Date.now()/1000 + 1800, error: "Cooling down"},
   ]};
   vm.runInContext("render(current, true)", context);
-  assert.match(allText(element("source-list")), /9 checked.*2 qualified.*next retry.*Cooling down/);
-  assert.equal(element("source-summary").textContent, "Sources reached: 0 / 1");
+  assert.match(allText(element("source-list")), /9 آزموده.*2 واجد شرایط هنگام آزمون.*تلاش بعدی.*Cooling down/);
+  assert.equal(element("source-summary").textContent, "منابع دریافت‌شده: 0 / 1 · 0 محتوای متفاوت · 0 حساب ناشر شناخته‌شده");
+});
+
+
+test("expired and undated evidence never creates usable links; fresh provisional remains explicit", () => {
+  const {context} = client();
+  for (const evidence_expires_at of [undefined, null, Date.now()/1000 - 1]) {
+    context.row = strongRow({evidence_expires_at, provisional: true});
+    assert.equal(vm.runInContext("safeConnection(row)", context), null);
+  }
+  context.row = strongRow({provisional: true});
+  assert.equal(vm.runInContext("safeConnection(row)", context), context.row.tg_link);
+  assert.match(allText(vm.runInContext("resultCard(row)", context)), /موقت/);
+});
+
+test("a cached connect click rechecks expiry even before polling refresh", () => {
+  const {context} = client();
+  context.row = strongRow();
+  const card = vm.runInContext("resultCard(row)", context);
+  const nodes = current => [current, ...current.children.flatMap(nodes)];
+  const link = nodes(card).find(item => item.href === context.row.tg_link);
+  assert.ok(link);
+  context.row.evidence_expires_at = Date.now()/1000 - 1;
+  let prevented = false;
+  link.listeners.click({preventDefault() { prevented = true; }});
+  assert.equal(prevented, true);
+});
+
+test("MTProto output format changes presentation without changing connection identity", () => {
+  const {context, element} = client();
+  context.row = strongRow();
+  element("link-format").value = "https";
+  element("link-format").listeners.change();
+  const share = vm.runInContext("shareConnection(safeConnection(row))", context);
+  assert.equal(share, context.row.tg_link.replace("tg://proxy", "https://t.me/proxy"));
+  assert.equal(vm.runInContext("mode", context), "mtproto");
+  const nodes = current => [current, ...current.children.flatMap(nodes)];
+  const card = vm.runInContext("resultCard(row)", context);
+  assert.equal(nodes(card).find(item => item.href).href, share);
+  element("limit").value = "100";
+  context.snapshot = {rows: Array.from({length: 20}, (_, index) => strongRow({rank: index + 1}))};
+  assert.equal(vm.runInContext("filteredRows(snapshot).rows.length", context), 10);
+});
+
+test("theme switches persist without requiring network or account data", () => {
+  const {context, element} = client();
+  const saved = {};
+  context.localStorage = {setItem(key, value) { saved[key] = value; }};
+  element("theme-toggle").listeners.click();
+  assert.equal(saved["revmamad-theme"], "light");
+  assert.equal(element("theme-toggle").textContent, "حالت تیره");
+  element("theme-toggle").listeners.click();
+  assert.equal(saved["revmamad-theme"], "dark");
+});
+
+
+test("media reports render separate measurements without exposing account or connection fields", () => {
+  const {context, element} = client();
+  context.report = {schema_version: 1, experimental: true, network_profile: "default", status: "complete", created_at: Date.now()/1000, logout_status: "confirmed", observed_bytes: 80*1048576, downloaded_bytes: 80*1048576, budget_bytes: 100*1048576, elapsed_seconds: 10, ranked_candidate_ids: ["a".repeat(64)], phone: "PRIVATE_PHONE", results: [{candidate_id: "a".repeat(64), status: "complete", network_profile: "default", completed_rounds: 2, proof_expires_at: Date.now()/1000 - 5, median_mbps: 12, median_ttfb_ms: 100, stalls: 0, secret: "PRIVATE_SECRET", rounds: [{status: "complete", bytes: 8*1048576, mbps: 12, elapsed_seconds: 1, short_sample: true}]}]};
+  vm.runInContext("renderMedia(report)", context);
+  const text = allText(element("media-report"));
+  assert.match(text, /رتبهٔ مدیا 1/);
+  assert.match(text, /12.00 Mbps/);
+  assert.match(text, /تأیید اتصال فعلی نیست/);
+  assert.match(text, /اطمینان محدود/);
+  assert.doesNotMatch(text, /PRIVATE|tg:\/\//);
+  context.report.network_profile = "mobile";
+  vm.runInContext("renderMedia(report)", context);
+  assert.match(allText(element("media-report")), /گزارش مدیای معتبر موجود نیست/);
+});
+
+
+test("personal source mutation cannot be overwritten by an older in-flight library response", async () => {
+  const {context, element} = client();
+  let releaseOld;
+  let lists = 0;
+  const source = {id: "a".repeat(64), name: "personal", personal: true, enabled: true};
+  context.fetch = async (_url, options) => {
+    const action = JSON.parse(options.body).action;
+    if (action === "list") {
+      lists += 1;
+      if (lists === 1) return new Promise(resolve => { releaseOld = () => resolve({ok: true, json: async () => ({sources: [source], favourites: []})}); });
+      return {ok: true, json: async () => ({sources: [{...source, enabled: false}], favourites: []})};
+    }
+    return {ok: true, json: async () => action === "media_report" ? {report: null} : {saved: true}};
+  };
+  vm.runInContext("controlToken='test-token'; refreshControl=async()=>{}; refresh=()=>{}", context);
+  const first = vm.runInContext("refreshLibrary()", context);
+  await vm.runInContext("libraryAction({action:'source_toggle',id:'a'.repeat(64),enabled:false})", context);
+  releaseOld();
+  await first;
+  assert.equal(lists, 2);
+  assert.match(allText(element("library-sources")), /غیرفعال/);
+  assert.equal(element("library-sources").children[0].children[1].textContent, "فعال کردن");
 });

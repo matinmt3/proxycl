@@ -43,10 +43,16 @@ class TelegramWebCollector(Collector):
     async def _fetch_source(self, client, source, report=None):
         try:
             text = (
-                await self._read_local_file(source.url)
-                if source.url.startswith("file://")
-                else await self._fetch_url(client, source.url)
+                source._manual_text
+                if hasattr(source, "_manual_text")
+                else (
+                    await self._read_local_file(source.url)
+                    if source.url.startswith("file://")
+                    else await self._fetch_url(client, source.url)
+                )
             )
+            if report is not None:
+                report["fetched"] = True
             candidates = parse_feed(text, source.name)
         except Exception as exc:
             detail = type(exc).__name__

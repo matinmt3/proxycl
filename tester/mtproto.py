@@ -17,13 +17,20 @@ import logging
 import math
 import os
 import socket
+import ssl
 import struct
 import time
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 
-from tester.faketls import authenticate_server_hello, build_client_hello, read_tls_record, wrap_tls_payload
+from tester.faketls import (
+    authenticate_server_hello,
+    build_client_hello,
+    read_tls_record,
+    wrap_tls_payload,
+    wrap_tls_stream,
+)
 from tester.secrets import ProxySecret, decode_secret, normalize_port, normalize_server
 from utils.models import FailureReason, Proxy, TestSample
 
@@ -35,6 +42,27 @@ VECTOR = 0x1CB5C415
 MAX_PROBE_RESPONSE = 4096
 logger = logging.getLogger("mtselector.protocol")
 _FORBIDDEN_FIRST_WORDS = {b"HEAD", b"POST", b"GET ", b"OPTI", b"\x16\x03\x01\x02", PADDED_TAG, b"\xee" * 4}
+
+
+def _connection_failure_reason(exc: BaseException) -> FailureReason:
+    """Preserve DNS/TLS causes wrapped by the certified WEB HTTP carrier."""
+    causes, current = [], exc
+    for _ in range(10):
+        if current is None or any(current is previous for previous in causes):
+            break
+        causes.append(current)
+        current = current.__cause__ or current.__context__
+    if any(isinstance(item, ssl.SSLError) for item in causes):
+        return FailureReason.TLS_ERROR
+    if any(isinstance(item, socket.gaierror) for item in causes):
+        return FailureReason.DNS_ERROR
+    if any(isinstance(item, TimeoutError) for item in causes):
+        return FailureReason.TCP_TIMEOUT
+    if isinstance(exc, OSError):
+        return FailureReason.TCP_REFUSED
+    if isinstance(exc, ValueError):
+        return FailureReason.HANDSHAKE_INVALID
+    return FailureReason.UNKNOWN
 
 
 def _make_aes_ctr(key: bytes, iv: bytes):
@@ -113,7 +141,7 @@ class _EncryptedReader:
         return result
 
 
-async def _read_frame(reader: _EncryptedReader, padded: bool) -> bytes:
+async def _read_frame(reader: _EncryptedReader, padded: bool, maximum: int = MAX_PROBE_RESPONSE) -> bytes:
     if padded:
         size = int.from_bytes(await reader.readexactly(4), "little")
     else:
@@ -127,7 +155,7 @@ async def _read_frame(reader: _EncryptedReader, padded: bool) -> bytes:
             size = prefix * 4
         else:
             raise ValueError("Invalid abridged length")
-    if not 20 <= size <= MAX_PROBE_RESPONSE:
+    if not 20 <= size <= maximum:
         raise ValueError("Invalid MTProto response length")
     return await reader.readexactly(size)
 
@@ -177,14 +205,17 @@ async def _exchange_probe(reader, writer, secret: ProxySecret) -> None:
 class _SessionTransport:
     """Retain both AES streams across the entire auth/session exchange."""
 
-    def __init__(self, reader, writer, secret: ProxySecret, dc_id: int):
+    def __init__(self, reader, writer, secret: ProxySecret, dc_id: int, *, maximum: int = MAX_PROBE_RESPONSE):
+        if type(maximum) is not int or not MAX_PROBE_RESPONSE <= maximum <= 2 * 1024 * 1024:
+            raise ValueError("Invalid MTProto packet limit")
+        self.maximum = maximum
         self.writer, self.secret = writer, secret
         self.header, self.encryptor, decryptor, _, _ = _build_transport(secret, dc_id)
         self.reader = _EncryptedReader(reader, decryptor, bool(secret.domain))
         self.first = True
 
     async def send(self, packet: bytes) -> None:
-        if not packet or len(packet) % 4 or len(packet) > MAX_PROBE_RESPONSE:
+        if not packet or len(packet) % 4 or len(packet) > self.maximum:
             raise ValueError("Invalid MTProto session packet size")
         if self.secret.padded:
             padded = packet + os.urandom(os.urandom(1)[0] % 16)
@@ -193,12 +224,12 @@ class _SessionTransport:
             words = len(packet) // 4
             framed = (bytes([words]) if words < 127 else b"\x7f" + words.to_bytes(3, "little")) + packet
         encrypted = (self.header if self.first else b"") + self.encryptor.encrypt(framed)
-        self.writer.write(wrap_tls_payload(encrypted, first=self.first) if self.secret.domain else encrypted)
+        self.writer.write(wrap_tls_stream(encrypted, first=self.first) if self.secret.domain else encrypted)
         self.first = False
         await self.writer.drain()
 
     async def receive(self) -> bytes:
-        packet = await _read_frame(self.reader, self.secret.padded)
+        packet = await _read_frame(self.reader, self.secret.padded, self.maximum)
         # The outer padded transport is independent of MTProto's inner padding.
         if packet[:8] == bytes(8):
             size = int.from_bytes(packet[16:20], "little")
@@ -280,16 +311,8 @@ async def test_proxy_strict(
         else:
             reader, writer = await asyncio.wait_for(asyncio.open_connection(server, port), connect_timeout)
         tcp_latency_ms = (time.perf_counter() - connection_started) * 1000
-    except socket.gaierror:
-        return failed(FailureReason.DNS_ERROR)
-    except TimeoutError:
-        return failed(FailureReason.TCP_TIMEOUT)
-    except OSError:
-        return failed(FailureReason.TCP_REFUSED)
-    except ValueError:
-        return failed(FailureReason.HANDSHAKE_INVALID)
-    except Exception:
-        return failed(FailureReason.UNKNOWN)
+    except Exception as exc:
+        return failed(_connection_failure_reason(exc))
     try:
         if secret.domain:
             async with asyncio.timeout(handshake_timeout):
@@ -380,16 +403,8 @@ async def test_proxy_once(
                 asyncio.open_connection(server, port), timeout=connect_timeout
             )
         tcp_latency_ms = (time.perf_counter() - connect_start) * 1000
-    except socket.gaierror:
-        return failed(FailureReason.DNS_ERROR)
-    except asyncio.TimeoutError:
-        return failed(FailureReason.TCP_TIMEOUT)
-    except OSError:
-        return failed(FailureReason.TCP_REFUSED)
-    except ValueError:
-        return failed(FailureReason.HANDSHAKE_INVALID)
-    except Exception:
-        return failed(FailureReason.UNKNOWN)
+    except Exception as exc:
+        return failed(_connection_failure_reason(exc))
     try:
         handshake_start = time.perf_counter()
         await asyncio.wait_for(_exchange_probe(reader, writer, secret), timeout=handshake_timeout)

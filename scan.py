@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import shutil
@@ -149,6 +150,12 @@ def _safe_reports(reports):
         "strict_qualified",
         "cooldown_until",
         "quality_attribution",
+        "source_id",
+        "publisher_id",
+        "content_id",
+        "fetched",
+        "parsed_unique",
+        "mirror_count",
     )
     for report in reports:
         row = {key: report[key] for key in fields if key in report}
@@ -174,17 +181,33 @@ def _restore_collection(collector, config, candidates, reports, mode=None):
         names.setdefault(source.name, set()).add(source_identity(source))
     collector.source_reports = reports
     collector._enabled_sources = enabled
-    collector._source_by_proxy = {
-        proxy.key(): next(iter(names[proxy.source]))
-        for proxy in candidates
-        if len(names.get(proxy.source, ())) == 1
-    }
+    enabled_ids = {source_identity(source) for source in enabled}
+    collector._source_by_proxy = {}
+    for proxy in candidates:
+        ids = [value for value in getattr(proxy, "source_memberships", []) if value in enabled_ids]
+        if not ids and len(names.get(proxy.source, ())) == 1:
+            ids = [next(iter(names[proxy.source]))]
+        if ids:
+            collector._source_by_proxy[proxy.key()] = ids
     collector._collection_completed = len(reports) == len(enabled)
 
 
 def run_scan(
     config: AppConfig, mode: str = "mtproto", limit: int | None = None, export: bool = True
 ) -> ScanOutcome:
+    from contextlib import nullcontext
+
+    from utils.process_lock import OutputRootLock
+
+    # Benchmarks are explicitly non-persistent and must not create output state.
+    with OutputRootLock(config.output.folder) if export else nullcontext():
+        return _run_scan_owned(config, mode, limit, export)
+
+
+def _run_scan_owned(config: AppConfig, mode: str, limit: int | None, export: bool) -> ScanOutcome:
+    from utils.user_sources import apply_user_sources
+
+    config = apply_user_sources(config)
     validate_request(mode, limit)
     config.scan.validate()
     from utils.scan_control import ScanController
@@ -193,6 +216,7 @@ def run_scan(
     requested_budget = config.scan.time_budget_seconds
     scan_controller = getattr(config, "_scan_controller", None) or ScanController()
     command = getattr(config, "_scan_command", "best10")
+    favourite_proxies = getattr(config, "_favourite_proxies", None)
     config = replace(config, scan=replace(config.scan))
     config._scan_controller = scan_controller
     config._scan_command = command
@@ -275,7 +299,14 @@ def run_scan(
     else:
         print(f"\n[{mode.upper()}] Collecting source feeds | network={config.scan.network}...", flush=True)
         try:
-            candidates = select_candidates(collector.collect(), None)
+            candidates = select_candidates(
+                favourite_proxies if favourite_proxies is not None else collector.collect(), None
+            )
+            if favourite_proxies is not None:
+                from utils.scan_state import _matches_mode
+
+                if any(not _matches_mode(proxy, mode) for proxy in candidates):
+                    raise ValueError("Favourite proxy does not match the selected mode")
         except asyncio.CancelledError as exc:
             raise KeyboardInterrupt("Collection stopped; previous saved scans are preserved") from exc
         collected_count = len(candidates)
@@ -508,6 +539,9 @@ def run_scan(
         results = rank(score_all(results, config.scoring))
     else:
         results = []
+    for result in results:
+        result.proof_max_age_seconds = config.output.proof_max_age_minutes * 60
+        result.provisional = bool(interrupted)
     output_cfg = replace(config.output, folder=str(folder))
     # Filtering does not need to create an output directory in benchmark-only runs.
     eligible = eligible_results(results, output_cfg)
@@ -515,6 +549,15 @@ def run_scan(
     reachable = sum(r.successes > 0 and r.avg_latency_ms is not None for r in results)
     strict_verified = len(eligible) if mode != "web" else 0
     summary = {
+        "report_schema": 2,
+        "candidate_pool_digest": hashlib.sha256(
+            "\n".join(sorted(proxy.key() for proxy in selected)).encode()
+        ).hexdigest(),
+        "ranking_policy": config.scoring.policy,
+        "scoring_settings": asdict(config.scoring),
+        "ranking_experimental": config.scoring.policy == "v2-experimental",
+        "proof_max_age_seconds": config.output.proof_max_age_minutes * 60,
+        "expired_results": sum(not result.evidence_fresh() for result in results),
         "run_id": context["run_id"],
         "started_at": context["started_at"],
         "completed_at": _now(),
@@ -581,6 +624,9 @@ def run_scan(
             Counter(row["reason"] for row in tester.state["prefilter"].values() if not row["passed"])
         )
     reports = _safe_reports(collector.record_quality(results))
+    from collector.provenance import source_summary
+
+    summary["sources"] = source_summary(reports)
     context["source_reports"] = reports
     update_progress(
         {

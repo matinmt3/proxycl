@@ -33,6 +33,7 @@ def eligible_results(results: List[ProxyResult], output_cfg: OutputConfig) -> Li
                 and r.telegram_jitter_ms <= output_cfg.mtproto_max_ping_jitter_ms
             )
         )
+        and r.evidence_fresh(max_age_seconds=output_cfg.proof_max_age_minutes * 60)
         and r.successes > 0
         and math.isfinite(r.score)
         and r.score >= output_cfg.min_score
@@ -75,13 +76,13 @@ class Exporter:
         return path
 
     def export_json(self, results: List[ProxyResult], filename: str = "proxy.json") -> Path:
-        data = [r.to_dict() for r in results]
+        data = [r.to_dict() for r in self._filtered(results)]
         return self._write(filename, json.dumps(data, indent=2, allow_nan=False))
 
     def export_txt(self, results: List[ProxyResult], filename: str = "proxy.txt") -> Path:
         lines = [
             f"{'[' + r.proxy.server + ']' if ':' in r.proxy.server else r.proxy.server}:{r.proxy.port}:{r.proxy.secret}  # score={r.score:.3f}"
-            for r in results
+            for r in self._filtered(results)
         ]
         return self._write(filename, "\n".join(lines) + ("\n" if lines else ""))
 
@@ -92,6 +93,13 @@ class Exporter:
             "secret",
             "source",
             "score",
+            "report_schema",
+            "ranking_policy",
+            "evidence_status",
+            "evidence_expires_at",
+            "provisional",
+            "within_session_jitter_ms",
+            "interconnection_drift_ms",
             "success_rate",
             "avg_latency_ms",
             "median_latency_ms",
@@ -114,7 +122,7 @@ class Exporter:
         with StringIO(newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            for r in results:
+            for r in self._filtered(results):
                 d = r.to_dict()
                 for key in ("dc_ids_verified", "strict_policy"):
                     d[key] = json.dumps(d.get(key), separators=(",", ":"))
@@ -122,13 +130,13 @@ class Exporter:
             return self._write(filename, f.getvalue())
 
     def export_telegram_links(self, results: List[ProxyResult], filename: str = "telegram_links.txt") -> Path:
-        lines = [self.connection_link(r) for r in results]
+        lines = [self.connection_link(r) for r in self._filtered(results)]
         return self._write(filename, "\n".join(lines) + ("\n" if lines else ""))
 
     def export_top_n(self, results: List[ProxyResult], n: int) -> Path:
         if n < 1:
             raise ValueError("Top count must be positive")
-        data = [r.to_dict() for r in results[:n]]
+        data = [r.to_dict() for r in self._filtered(results)[:n]]
         return self._write(f"top{n}.json", json.dumps(data, indent=2, allow_nan=False))
 
     def export_best_n_readable(
@@ -157,6 +165,7 @@ class Exporter:
                 f"    Telegram RTT p95: {r.telegram_p95_ms:.0f} ms | Median: {r.telegram_median_ms:.0f} ms | Jitter: {r.telegram_jitter_ms:.0f} ms\n"
                 f"    Sessions: {r.strict_successes}/{r.attempts} | Matched pings: {r.ping_count} | Success: {r.success_rate * 100:.0f}% | Score: {r.score * 100:.1f}%\n"
                 f"    Setup: {r.avg_latency_ms:.0f} ms\n"
+                f"    Policy: {r.ranking_policy} | Evidence: {r.freshness_status} | Expires (UTC epoch): {r.evidence_expires_at:.0f}\n"
                 f"    Link:  {self.connection_link(r)}\n"
             )
 

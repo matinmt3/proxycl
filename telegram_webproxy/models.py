@@ -12,7 +12,7 @@ import hashlib
 import hmac
 import ipaddress
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
 import idna
@@ -96,6 +96,8 @@ class TelegramWebProxy:
     protocol: str = "webproxy"
     kind: str = "webproxy"
 
+    source_memberships: list[str] = field(default_factory=list)
+
     def __post_init__(self):
         self.hostname, self.base_path = normalize_address(self.server)
         if self.port != 443 or type(self.port) is not int:
@@ -142,6 +144,7 @@ class TelegramWebProxy:
             "port": self.port,
             "secret": self.secret,
             "source": self.source,
+            "source_memberships": list(self.source_memberships),
             "tag": self.tag,
         }
 

@@ -27,7 +27,9 @@ def cli_config(config, monkeypatch):
     return config
 
 
-@pytest.mark.parametrize("flag, expected", [("--help", "--no-browser"), ("--version", "REVMAMAD 3.4.0")])
+@pytest.mark.parametrize(
+    "flag, expected", [("--help", "--no-browser"), ("--version", f"REVMAMAD {main.__version__}")]
+)
 def test_help_and_version_work_without_any_installed_packages(tmp_path, flag, expected):
     result = subprocess.run(
         [sys.executable, "-S", str(main.PROJECT_ROOT / "main.py"), flag],
@@ -68,7 +70,7 @@ def test_menu_exercises_every_action_and_returns_after_dashboard(cli_config, mon
         ("collect", {"mode": "web"}),
     ]
     output = capsys.readouterr().out
-    assert "REVMAMAD v3.4.0" in output and "Invalid choice" in output and "Bye!" in output
+    assert f"REVMAMAD v{main.__version__}" in output and "Invalid choice" in output and "Bye!" in output
 
 
 def test_menu_survives_action_failure_and_interrupt(cli_config, monkeypatch, capsys):
@@ -142,7 +144,7 @@ def test_banner_fits_32_column_termux(monkeypatch, capsys):
     lines = capsys.readouterr().out.splitlines()
     assert max(map(len, lines)) <= 32
     assert any("#" in line for line in lines)
-    assert "REVMAMAD v3.4.0" in lines
+    assert f"REVMAMAD v{main.__version__}" in lines
 
 
 def make_result(server, *, success, failure=FailureReason.NONE, latency=100):

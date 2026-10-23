@@ -18,6 +18,9 @@ def _latency_score(avg_latency_ms: float | None, max_latency_ms: float) -> float
 
 
 def score_result(result: ProxyResult, scoring: ScoringConfig) -> float:
+    if scoring.policy not in ("v1", "v2-experimental"):
+        raise ValueError("Unknown ranking policy")
+    result.ranking_policy = scoring.policy
     if result.verification_profile == "telegram_session":
         latency = result.telegram_p95_ms
         if not result.strict_successes or latency is None:
@@ -30,10 +33,20 @@ def score_result(result: ProxyResult, scoring: ScoringConfig) -> float:
         total = sum(weights)
         if total <= 0:
             weights, total = (0.6, 0.3, 0.1), 1.0
+        stability = result.stability
+        if scoring.policy == "v2-experimental":
+            # Treat noise within a connection independently from changing RTT
+            # between fresh connections. Both carry equal stability penalties.
+            within, drift = result.within_session_jitter_ms, result.interconnection_drift_ms
+            stability = (
+                0.0
+                if within is None or drift is None
+                else max(0.0, 1.0 - (within + drift) / result.quality_policy.max_jitter_ms)
+            )
         components = (
             result.reliability_lower_bound,
             _latency_score(latency, result.quality_policy.max_p95_ms),
-            result.stability,
+            stability,
         )
         return max(0.0, min(1.0, sum(weight * value for weight, value in zip(weights, components)) / total))
     latency = result.avg_latency_ms

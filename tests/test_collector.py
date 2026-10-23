@@ -43,7 +43,10 @@ async def test_http_collection_isolates_failed_sources_and_deduplicates(monkeypa
     assert "/disabled" not in calls
     assert "HTTP 503" in caplog.text
     assert "private-example" not in caplog.text
-    assert getattr(collector, "source_reports", None) == [
+    assert [
+        {k: v for k, v in row.items() if k in {"name", "status", "count", "error"}}
+        for row in collector.source_reports
+    ] == [
         {"name": "bad", "status": "error", "count": 0, "error": "HTTPStatusError (HTTP 503)"},
         {"name": "text", "status": "ok", "count": 2},
         {"name": "json", "status": "ok", "count": 1},
@@ -97,13 +100,19 @@ async def test_empty_and_missing_local_files_have_distinct_safe_reports_and_rese
     ]
     collector = Collector(config)
     assert await collector.collect_async() == []
-    assert getattr(collector, "source_reports", None) == [
+    assert [
+        {k: v for k, v in row.items() if k in {"name", "status", "count", "error"}}
+        for row in collector.source_reports
+    ] == [
         {"name": "empty", "status": "empty", "count": 0},
         {"name": "missing", "status": "error", "count": 0, "error": "FileNotFoundError"},
     ]
     config.sources = []
     assert await collector.collect_async() == []
-    assert collector.source_reports == []
+    assert [
+        {k: v for k, v in row.items() if k in {"name", "status", "count", "error"}}
+        for row in collector.source_reports
+    ] == []
 
 
 @pytest.mark.asyncio

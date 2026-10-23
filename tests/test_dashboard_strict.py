@@ -2,6 +2,7 @@
 
 import copy
 import json
+import time
 
 import pytest
 
@@ -14,6 +15,7 @@ def strict_row():
         "port": 443,
         "secret": "00112233445566778899aabbccddeeff",
         "source": "fixture",
+        "evidence_expires_at": time.time() + 3600,
         "tg_link": "tg://proxy?server=session.example&port=443&secret=00112233445566778899aabbccddeeff",
         "web_link": "https://t.me/proxy?server=session.example&port=443&secret=00112233445566778899aabbccddeeff",
         "score": 0.8,

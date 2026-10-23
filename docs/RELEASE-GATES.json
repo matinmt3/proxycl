@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "version": "4.0.0-rc.1",
+  "channel": "prerelease",
+  "stable_eligible": false,
+  "default_ranking_policy": "v1",
+  "new_ranking_policy": "v2-experimental",
+  "web_status": "experimental",
+  "media_status": "experimental_cdn_unsupported",
+  "gates": {
+    "automated_source_suite": "passed",
+    "controlled_certified_web_relay": "passed",
+    "browser_synthetic_workflows": "passed",
+    "physical_android_termux": "pending",
+    "real_account_media_and_migration": "pending",
+    "real_web_telegram_client": "pending",
+    "paired_18_trials_three_days_two_networks": "pending",
+    "production_install_from_public_asset": "pending_physical_termux"
+  }
+}

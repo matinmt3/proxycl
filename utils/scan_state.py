@@ -122,13 +122,16 @@ def deserialize_proxy(row: dict) -> Proxy | WebProxy | TelegramWebProxy:
         raise ValueError("Invalid saved proxy candidate")
     port = normalize_port(row.get("port"))
     source = _text(row.get("source", "unknown"), "proxy source", empty=True)
+    memberships = source_memberships(row.get("source_memberships", []))
     if row.get("kind") == "webproxy":
         if row.get("protocol") != "webproxy":
             raise ValueError("Invalid saved Telegram WEB protocol")
         tag = row.get("tag")
         if tag is not None:
             _text(tag, "proxy tag", 256, empty=True)
-        return TelegramWebProxy(row.get("server"), row.get("secret"), source, tag, port)
+        proxy = TelegramWebProxy(row.get("server"), row.get("secret"), source, tag, port)
+        proxy.source_memberships = memberships
+        return proxy
     server = normalize_server(row.get("server"))
     if row.get("kind") == "mtproto":
         if row.get("protocol", "mtproto") != "mtproto":
@@ -138,10 +141,23 @@ def deserialize_proxy(row: dict) -> Proxy | WebProxy | TelegramWebProxy:
         tag = row.get("tag")
         if tag is not None:
             _text(tag, "proxy tag", 256, empty=True)
-        return Proxy(server, port, secret, source, tag)
+        return Proxy(server, port, secret, source, tag, memberships)
     if row.get("kind") == "web":
-        return WebProxy(server, port, row.get("protocol"), source)
+        proxy = WebProxy(server, port, row.get("protocol"), source)
+        proxy.source_memberships = memberships
+        return proxy
     raise ValueError("Invalid saved proxy kind")
+
+
+def source_memberships(value) -> list[str]:
+    """Only bounded source identity digests may enter durable proxy evidence."""
+    if (
+        not isinstance(value, list)
+        or len(value) > 1024
+        or any(not isinstance(item, str) or re.fullmatch(r"[0-9a-f]{64}", item) is None for item in value)
+    ):
+        raise ValueError("Invalid proxy source memberships")
+    return list(dict.fromkeys(value))
 
 
 def _sample(row: dict) -> TestSample:
@@ -186,6 +202,9 @@ def serialize_result(result: ProxyResult) -> dict:
         "samples": [asdict(sample) for sample in result.samples],
         "verification_profile": result.verification_profile,
         "quality_policy": result.quality_policy.to_dict(),
+        "ranking_policy": result.ranking_policy,
+        "proof_max_age_seconds": result.proof_max_age_seconds,
+        "provisional": result.provisional,
     }
     deserialize_result(row)
     return row
@@ -213,11 +232,23 @@ def deserialize_result(row: dict) -> ProxyResult:
         policy = TelegramQualityPolicy(**policy)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Invalid saved quality policy: {exc}") from exc
+    ranking_policy = row.get("ranking_policy", "v1")
+    if ranking_policy not in ("v1", "v2-experimental"):
+        raise ValueError("Unknown saved ranking policy; retest with the current version")
+    ttl = _number(row.get("proof_max_age_seconds", 1800.0), "proof lifetime", minimum=60)
+    if ttl > 86400:
+        raise ValueError("Proof lifetime exceeds one day")
+    provisional = row.get("provisional", False)
+    if type(provisional) is not bool:
+        raise ValueError("Invalid provisional flag")
     return ProxyResult(
         proxy,
         [_sample(sample) for sample in samples],
         verification_profile=profile,
         quality_policy=policy,
+        ranking_policy=ranking_policy,
+        proof_max_age_seconds=ttl,
+        provisional=provisional,
     )
 
 
@@ -353,6 +384,13 @@ def scan_fingerprint(config, mode: str) -> str:
             testing.pop(name)
     output = _mapping(config.output)
     output.pop("folder", None)
+    # The v3.4 defaults used a 30-minute checkpoint proof TTL and v1 scoring.
+    # Additive metadata must not strand otherwise compatible unfinished pools.
+    if output.get("proof_max_age_minutes") == 30:
+        output.pop("proof_max_age_minutes")
+    scoring = _mapping(config.scoring)
+    if scoring.get("policy") == "v1":
+        scoring.pop("policy")
     sources = (
         config.web_sources
         if mode == "web"
@@ -367,7 +405,7 @@ def scan_fingerprint(config, mode: str) -> str:
         "schema": SCHEMA,
         "mode": mode,
         "testing": testing,
-        "scoring": _mapping(config.scoring),
+        "scoring": scoring,
         "output": output,
         "sources": identities,
     }

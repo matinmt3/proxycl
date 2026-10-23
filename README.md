@@ -1,22 +1,26 @@
-# REVMAMAD v3.4 — Telegram WEB, Adaptive Scans and Local Controls
+# REVMAMAD 4.0.0-rc.1 — نسخهٔ آزمایشی
+
+این نسخه مراحل فنی نقشهٔ راه ۳.۵ تا ۴ را یکپارچه می‌کند: قفل مشترک اسکن‌ها، شواهد دارای انقضا، منابع شخصی و علاقه‌مندی، داشبورد فارسی، آپدیت مرحله‌ای با بازگشت و تست اختیاری مدیا. **نسخهٔ ۴ هنوز پایدار اعلام نشده است.** آزمون گوشی واقعی، دانلود با حساب واقعی و مقایسهٔ رتبه‌بندی در سه روز و دو شبکه همچنان شرط انتشار پایدار هستند. نسخهٔ ۳.۴ آخرین نسخهٔ پایدار باقی می‌ماند.
+
+راهنمای کامل فارسی: [نسخهٔ ۴](docs/V4-FA.md)، [شواهد آزمون](docs/TESTING.md)، [معیارهای انتشار](docs/RELEASE-GATES.json).
 
 Test Telegram server identity, encrypted ping replies and independent reconnects through MTProto proxies. The default scan screens candidates, runs strict sessions, then retests up to twenty finalists for longer before recommending up to ten. Support Telegram WEB relays over certified HTTPS/WSS as an independent fourth mode. Export direct `tg://` links and Telegram HTTPS shares; test HTTP/SOCKS internet proxies separately. Adaptive workers, optional time budgets and local dashboard controls make long scans easier to manage. Stop with Ctrl+C, retain provisional evidence and resume a recent matching scan. Network profiles keep results and history separate.
 
 ## Install or update in Termux
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/matinmt3/proxycl/main/install.sh)
+REVMAMAD_BRANCH=codex/telegram-v4 REVMAMAD_DIR="$HOME/Revmamad-v4" bash <(curl -fsSL https://raw.githubusercontent.com/matinmt3/proxycl/codex/telegram-v4/install.sh)
 ```
 
-If curl is missing, run `pkg install -y curl` first. The installer installs Python, pip, Git and build tools, clones into `~/Revmamad`, installs `requirements-lite.txt`, checks dependencies and opens the menu. Process substitution keeps keyboard input available.
+If curl is missing, run `pkg install -y curl` first. This RC command uses a separate `~/Revmamad-v4` checkout. The installer installs Python, pip, Git and build tools, installs `requirements-lite.txt`, checks dependencies and opens the menu. Process substitution keeps keyboard input available.
 
 Run the same command to update. Existing tracked edits, another repository or another branch stop the update so your work is preserved. Next time:
 
 ```bash
-cd ~/Revmamad && python main.py
+cd ~/Revmamad-v4 && python launcher.py
 ```
 
-Overrides: `REVMAMAD_DIR`, `REVMAMAD_REPO` and `REVMAMAD_BRANCH`. A branch override also requires the same branch in the raw installer URL. Root and nested `TelegramProxySelector/` layouts are supported. Termux manages pip through `python-pip`; see its [official package patch](https://github.com/termux/termux-packages/blob/master/packages/python-pip/install_py_preventing_pip_from_installing.patch).
+Overrides: `REVMAMAD_DIR`, `REVMAMAD_REPO` and `REVMAMAD_BRANCH`. A branch override also requires the same branch in the raw installer URL. Root-layout checkouts support staged updates. An old nested checkout requests a separate installation and preserves its files. Termux manages pip through `python-pip`; see its [official package patch](https://github.com/termux/termux-packages/blob/master/packages/python-pip/install_py_preventing_pip_from_installing.patch).
 
 ## Menu and commands
 
@@ -87,7 +91,7 @@ The default evidence lifetime is **30 minutes** (`scan.checkpoint_max_age_minute
 
 Menu 4 uses Python's standard-library server; the lightweight installation includes everything it needs. Open the printed address, normally **http://127.0.0.1:8000**, if the browser does not open automatically. Keep that terminal session running; Ctrl+C stops the server.
 
-The dashboard has separate MTProto, Telegram Web Link, Telegram WEB Proxy and HTTP/SOCKS tabs, live stage/progress, provisional labels, source-quality counts, network history, filtering and copyable qualifying links. Strict cards show **Telegram RTT p95**, session passes as **n/N**, matched pong/DC counts and a labeled reliability lower bound. The separate **Probe duration** includes setup time. Old transport-only results are read-only evidence and request a new strict scan; malformed strict metadata cannot enable connection actions. Refresh/pause controls manage dashboard updates; polling pauses while hidden. The standard local dashboard provides real Start, Stop & save, Resume and Recheck controls, with one active job and explicit Scan/Recheck resume selection. It validates network/count/time inputs, an unpredictable per-server header token, exact Host/Origin and loopback peers. Controls bind to `127.0.0.1`; `--read-only` disables them. A non-loopback configured host and the optional ASGI adapter remain read-only. The standard server blocks cross-site embedding and cross-origin control requests. Commands remain available to copy. Assets are local, with no CDN dependency. Use `dashboard --network NAME` to view the intended profile.
+The dashboard has three groups (MTProto, Telegram WEB Proxy and HTTP/SOCKS), an MTProto share-format selector, live stage/progress, provisional labels, source-quality counts, network history, filtering and copyable qualifying links. Strict cards show **Telegram RTT p95**, session passes as **n/N**, matched pong/DC counts and a labeled reliability lower bound. The separate **Probe duration** includes setup time. Old transport-only results are read-only evidence and request a new strict scan; malformed strict metadata cannot enable connection actions. Refresh/pause controls manage dashboard updates; polling pauses while hidden. The standard local dashboard provides real Start, Stop & save, Resume and Recheck controls, with one active job and explicit Scan/Recheck resume selection. It validates network/count/time inputs, an unpredictable per-server header token, exact Host/Origin and loopback peers. Controls bind to `127.0.0.1`; `--read-only` disables them. A non-loopback configured host and the optional ASGI adapter remain read-only. The standard server blocks cross-site embedding and cross-origin control requests. Commands remain available to copy. Assets are local, with no CDN dependency. Use `dashboard --network NAME` to view the intended profile.
 
 Optional desktop/container adapter:
 

@@ -118,3 +118,17 @@ python main.py recheck --mode mtproto --network phone-check
 نسخهٔ برنامه، نسخهٔ اندروید، منبع نصب Termux، نسخه/منبع تلگرام، نوع اینترنت، نتیجهٔ ۱۱ بررسی `selftest` و مرحلهٔ بروز خطا را ثبت کنید. برای Resume بنویسید توقف در کدام مرحله بود و پس از ادامه کدام شواهد از نو تست شدند؛ برای WEB نتیجهٔ شناخته‌شدن لینک را هم بگویید. اگر پروکسی اول فهرست در تلگرام خوب نبود، زمان تست و رفتار مشاهده‌شده را ذکر کنید. رمز، کد ورود، توکن کنترل داشبورد یا فایل نشست حساب را ارسال نکنید.
 
 وجود این راهنما به معنی قبولی آزمون گوشی نیست. پس از انتشار نهایی، فرمان نصب معمول از شاخهٔ `main` در README برای نصب/آپدیت عمومی استفاده می‌شود.
+
+
+## Additional v4 RC acceptance checks (not yet executed on a physical phone)
+
+Record Android, Termux and Telegram versions, device model and your chosen network label. Use a separate RC checkout; retain the stable installation.
+
+1. Fresh install, local dashboard and the three mode families at 320px. Copy and open actual fresh links in the installed Telegram client.
+2. Start one long scan; attempt a second CLI/dashboard/scheduler writer on the same output root. Confirm refusal and no damaged snapshot.
+3. Ctrl+C, screen off, internet loss, Android force-stop, restart and Resume. Record the last completed sample/checkpoint and expiry labels.
+4. Add personal sources/favourites, save settings, update then roll back. Compare source/settings/output checksums and confirm the previous runnable version.
+5. With your own locally entered API credentials, test an explicitly chosen public document through up to five freshly qualified proxies. Record media DC migration, observed volume, cap/interrupt statuses and logout confirmation. Do not share credentials or account screenshots.
+6. Export doctor diagnostics, inspect the allowlisted report, and attach only that sanitized report with the test outcome.
+
+These boxes remain open until real device evidence is recorded. Host, shim and controlled-relay tests do not fill them automatically.

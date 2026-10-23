@@ -8,6 +8,7 @@ import pytest
 
 from dashboard import data
 from tests.test_dashboard_v3 import write_snapshot
+from utils.process_lock import OutputRootLock
 
 
 def progress(**extra):
@@ -61,7 +62,8 @@ def api(tmp_path, mode="mtproto"):
 
 def test_live_progress_survives_missing_snapshot_without_promoting_proxies(tmp_path):
     extra_file(tmp_path, "progress.json", progress(auth_key="DO NOT EXPOSE"))
-    current = api(tmp_path)
+    with OutputRootLock(tmp_path):
+        current = api(tmp_path)
     assert current["state"] == "missing"
     assert current["rows"] == []
     assert current["progress"]["stage"] == "finalists"
@@ -100,9 +102,15 @@ def test_stale_progress_is_not_displayed_as_live(tmp_path):
         "progress.json",
         progress(updated_at=(datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()),
     )
-    current = api(tmp_path)
+    with OutputRootLock(tmp_path):
+        current = api(tmp_path)
     assert current["progress"] is None
     assert current["progress_state"] == "stale"
+
+    recovered = api(tmp_path)["progress"]
+    assert recovered["recovery_needed"] is True
+    assert recovered["active"] is False
+    assert recovered["stage"] == "stopped"
 
 
 def test_stopped_progress_is_past_activity_with_resume_command_preserved(tmp_path):

@@ -1,15 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="fa" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
   <title>REVMAMAD — Proxy Radar</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/dashboard.js" defer></script>
 </head>
 <body>
-  <a class="skip-link" href="#proxy-panel">Skip to results</a>
+  <a class="skip-link" href="#proxy-panel">رفتن به نتایج</a>
   <main class="shell">
     <header class="topbar">
       <div class="brand">
@@ -18,100 +18,115 @@
           <path d="M24 3v21l15 15M3 24h12M24 36v9M36 24h9"/>
           <circle class="radar-dot" cx="24" cy="24" r="3"/>
         </svg>
-        <div><p class="eyebrow">LOCAL PROXY RADAR <span class="version">V3.4</span></p><h1>REVMAMAD</h1></div>
+        <div><p class="eyebrow">رادار محلی پروکسی <span class="version">V4 PREVIEW</span></p><h1>REVMAMAD</h1></div>
       </div>
       <div class="toolbar">
-        <button id="refresh" class="button" type="button">Refresh</button>
-        <button id="pause" class="button quiet" type="button" aria-pressed="false">Pause updates</button>
+        <button id="theme-toggle" class="button quiet" type="button" aria-pressed="false">حالت روشن</button>
+        <button id="refresh" class="button" type="button">تازه‌سازی</button>
+        <button id="pause" class="button quiet" type="button" aria-pressed="false">توقف به‌روزرسانی</button>
       </div>
     </header>
 
-    <div class="mode-tabs" role="tablist" aria-label="Proxy type">
-      <button id="tab-mtproto" type="button" role="tab" aria-selected="true" aria-controls="proxy-panel" data-mode="mtproto">MTProto <span>Telegram</span></button>
-      <button id="tab-telegram" type="button" role="tab" aria-selected="false" aria-controls="proxy-panel" tabindex="-1" data-mode="telegram">Telegram Web Link <span>t.me/proxy</span></button>
+    <div class="mode-tabs" role="tablist" aria-label="نوع پروکسی">
+      <button id="tab-mtproto" type="button" role="tab" aria-selected="true" aria-controls="proxy-panel" data-mode="mtproto">MTProto <span>تلگرام</span></button>
       <button id="tab-webproxy" type="button" role="tab" aria-selected="false" aria-controls="proxy-panel" tabindex="-1" data-mode="webproxy">Telegram WEB Proxy <span>WSS · t.me/webproxy</span></button>
-      <button id="tab-web" type="button" role="tab" aria-selected="false" aria-controls="proxy-panel" tabindex="-1" data-mode="web">HTTP / SOCKS <span>HTTPS origin probe</span></button>
+      <button id="tab-web" type="button" role="tab" aria-selected="false" aria-controls="proxy-panel" tabindex="-1" data-mode="web">HTTP / SOCKS <span>آزمون وب</span></button>
     </div>
 
     <section id="proxy-panel" role="tabpanel" aria-labelledby="tab-mtproto" tabindex="-1">
       <div class="snapshot-heading">
-        <div><p class="eyebrow" id="mode-label">TELEGRAM TRANSPORT</p><h2 id="mode-title">Your best MTProto connections</h2></div>
-        <span class="pill" id="connection-state">Local results</span>
+        <div><p class="eyebrow" id="mode-label">پروکسی تلگرام</p><h2 id="mode-title">بهترین اتصال‌های MTProto شما</h2></div>
+        <span class="pill" id="connection-state">نتایج محلی</span>
       </div>
-      <p id="mode-description" class="description">Strict Telegram server checks with encrypted ping RTT and independent reconnect samples.</p>
-      <p id="verification-status" class="measurement-note" role="status">Re-scan old transport results for strict Telegram verification.</p>
+      <p id="mode-description" class="description">آزمون هویت سرور تلگرام، پینگ رمز‌شده و اتصال‌های مجدد مستقل.</p>
+      <p id="verification-status" class="measurement-note" role="status">نتایج قدیمی برای تأیید دقیق به آزمون دوباره نیاز دارند.</p>
       <p id="status" class="status" role="status" aria-live="polite" aria-atomic="true">Loading the last saved scan…</p>
-      <p id="partial-note" class="partial-note" hidden>Stopped scan / partial results.</p>
+      <p id="partial-note" class="partial-note" hidden>اسکن متوقف شده؛ نتایج موقت هستند.</p>
 
       <section class="scan-progress" aria-labelledby="progress-title">
-        <div class="progress-heading"><h3 id="progress-title">Scan activity</h3><span id="network-label" class="pill neutral">Network: default</span></div>
-        <label id="progress-label" for="scan-progress">No active scan reported</label>
+        <div class="progress-heading"><h3 id="progress-title">روند آزمون</h3><span id="network-label" class="pill neutral">شبکه: default</span></div>
+        <label id="progress-label" for="scan-progress">اسکن فعالی گزارش نشده</label>
         <progress id="scan-progress" max="1" value="0">0%</progress>
-        <p id="progress-meta" class="muted" aria-live="polite">Live activity appears while a terminal scan is running.</p>
+        <p id="progress-meta" class="muted" aria-live="polite">روند اسکن جاری در این قسمت نمایش داده می‌شود.</p>
       </section>
 
       <section id="scan-controls" class="scan-controls" aria-labelledby="control-title" hidden>
-        <div class="progress-heading"><h3 id="control-title">Run a scan on this device</h3><span id="control-state" class="pill neutral">Ready</span></div>
-        <p class="measurement-note">Keep this terminal session open. The proxy type selected above is tested separately; completed checks are saved when you stop.</p>
+        <div class="progress-heading"><h3 id="control-title">آزمون روی همین دستگاه</h3><span id="control-state" class="pill neutral">آماده</span></div>
+        <p class="measurement-note">ترمینال را باز نگه دارید. گروه انتخاب‌شده جداگانه آزمایش می‌شود و هنگام توقف، آزمون‌های کامل‌شده ذخیره می‌شوند.</p>
         <div class="control-fields">
-          <div class="field"><label for="control-network">Network profile</label><input id="control-network" value="default" maxlength="32" pattern="[A-Za-z0-9_-]{1,32}" autocomplete="off" spellcheck="false" aria-describedby="network-help"><small id="network-help" class="muted">A name you choose, such as wifi or mobile.</small></div>
-          <div class="field"><label for="control-scope">Scan size</label><select id="control-scope"><option value="all">ALL candidates</option><option value="count">Custom count</option><option value="3">3 minutes</option><option value="10">10 minutes</option><option value="20">20 minutes</option></select></div>
-          <div class="field" id="control-count-field" hidden><label for="control-count">Candidates to test</label><input id="control-count" type="number" min="1" max="1000000" step="1" inputmode="numeric" value="100"></div>
-          <div class="field"><label for="control-resume-kind">Resume saved</label><select id="control-resume-kind"><option value="best10">Scan</option><option value="recheck">Recheck</option></select></div>
+          <div class="field"><label for="control-network">نام شبکه</label><input id="control-network" value="default" maxlength="32" pattern="[A-Za-z0-9_-]{1,32}" autocomplete="off" spellcheck="false" aria-describedby="network-help"><small id="network-help" class="muted">نام دلخواه شما، مانند wifi یا mobile.</small></div>
+          <div class="field"><label for="control-scope">مقدار آزمون</label><select id="control-scope"><option value="all">ALL · همهٔ پروکسی‌ها</option><option value="count">تعداد دلخواه</option><option value="3">۳ دقیقه</option><option value="10">۱۰ دقیقه</option><option value="20">۲۰ دقیقه</option></select></div>
+          <div class="field" id="control-count-field" hidden><label for="control-count">پروکسی برای آزمون</label><input id="control-count" type="number" min="1" max="1000000" step="1" inputmode="numeric" value="100"></div>
+          <div class="field"><label for="control-resume-kind">ادامهٔ ذخیره‌شده</label><select id="control-resume-kind"><option value="best10">اسکن</option><option value="recheck">بازآزمایی</option></select></div>
         </div>
-        <div class="control-actions"><button id="control-start" class="button primary" type="button">Start scan</button><button id="control-stop" class="button danger" type="button" disabled>Stop &amp; save</button><button id="control-resume" class="button quiet" type="button">Resume saved</button><button id="control-recheck" class="button quiet" type="button">Recheck top results</button></div>
-        <p id="control-feedback" class="control-feedback" role="status" aria-live="polite" aria-atomic="true">Controls run only on this device's local dashboard address.</p>
+        <div class="control-actions"><button id="control-start" class="button primary" type="button">شروع آزمون</button><button id="control-stop" class="button danger" type="button" disabled>توقف و ذخیره</button><button id="control-resume" class="button quiet" type="button">ادامهٔ ذخیره‌شده</button><button id="control-recheck" class="button quiet" type="button">بازآزمایی بهترین‌ها</button></div>
+        <p id="control-feedback" class="control-feedback" role="status" aria-live="polite" aria-atomic="true">کنترل‌ها فقط در نشانی محلی همین دستگاه در دسترس هستند.</p>
       </section>
 
       <div class="snapshot-info">
-        <div><span class="small-label" id="scan-time-label">LAST COMPLETED SCAN</span><time id="scan-time">No completed scan</time><p id="scan-meta" class="muted">Start a scan in the terminal to see its results here.</p></div>
-        <span id="freshness" class="pill neutral">Waiting for results</span>
+        <div><span class="small-label" id="scan-time-label">آخرین آزمون کامل</span><time id="scan-time">اسکن کاملی موجود نیست</time><p id="scan-meta" class="muted">آزمون را شروع کنید تا نتایج اینجا نمایش داده شوند.</p></div>
+        <span id="freshness" class="pill neutral">در انتظار نتیجه</span>
       </div>
 
-      <details class="health history-panel"><summary>Recent tests on this network <span id="history-count"></span></summary><p class="measurement-note">Past observations only. Run a fresh scan before choosing a connection; history never qualifies a result.</p><ol id="history-list" class="source-list"></ol></details>
-      <div class="metrics" aria-label="Scan counts">
-        <article class="metric"><span>Selected</span><strong id="count-selected">—</strong><small>Candidates to test</small></article>
-        <article class="metric"><span>Tested</span><strong id="count-tested">—</strong><small id="tested-description">Completed checks</small></article>
-        <article class="metric accent"><span id="verified-label">Strict passed</span><strong id="count-verified">—</strong><small id="verified-description">Qualified session checks</small></article>
-        <article class="metric"><span>Shown</span><strong id="count-displayed">0</strong><small>Current results</small></article>
+      <details class="health history-panel"><summary>آزمون‌های اخیر این شبکه <span id="history-count"></span></summary><p class="measurement-note">تاریخچه فقط برای مقایسه است. انتخاب اتصال به آزمون تازه نیاز دارد.</p><ol id="history-list" class="source-list"></ol></details>
+      <div class="metrics" aria-label="شمارنده‌های آزمون">
+        <article class="metric"><span>انتخاب‌شده</span><strong id="count-selected">—</strong><small>پروکسی برای آزمون</small></article>
+        <article class="metric"><span>آزموده‌شده</span><strong id="count-tested">—</strong><small id="tested-description">آزمون کامل‌شده</small></article>
+        <article class="metric accent"><span id="verified-label">تأیید دقیق</span><strong id="count-verified">—</strong><small id="verified-description">جلسه‌های واجد شرایط</small></article>
+        <article class="metric"><span>نمایش‌داده‌شده</span><strong id="count-displayed">0</strong><small>نتایج فعلی</small></article>
       </div>
 
       <div class="health-row">
-        <details class="health"><summary><span id="source-summary">Source health</span></summary><ul id="source-list" class="source-list"></ul></details>
-        <details class="health"><summary><span id="failure-summary">Failure details</span></summary><ul id="failure-list" class="source-list"></ul></details>
+        <details class="health"><summary><span id="source-summary">وضعیت منابع</span></summary><ul id="source-list" class="source-list"></ul></details>
+        <details class="health"><summary><span id="failure-summary">علت شکست‌ها</span></summary><ul id="failure-list" class="source-list"></ul></details>
       </div>
 
       <section class="results-section" aria-labelledby="results-title">
-        <div class="section-heading"><h2 id="results-title">Top verified results</h2><p id="result-count" class="muted">Up to 10 results</p></div>
+        <div class="section-heading"><h2 id="results-title">بهترین نتایج تأییدشده</h2><p id="result-count" class="muted">حداکثر ۱۰ نتیجه</p></div>
         <div class="filters">
-          <div class="field search-field"><label for="search">Search</label><input id="search" type="search" placeholder="Endpoint or source" autocomplete="off"></div>
-          <div class="field"><label for="sortBy">Sort results</label><select id="sortBy"><option value="score">Best rank</option><option id="telegram-rtt-sort" value="telegram_p95_ms">Lowest Telegram RTT p95</option><option id="probe-duration-sort" value="avg_latency_ms">Shortest probe duration (diagnostic)</option><option value="success_rate">Highest sample pass rate</option><option id="consistency-sort" value="stability">Probe consistency (diagnostic)</option></select></div>
-          <div class="field" id="protocol-field" hidden><label for="protocol">Protocol</label><select id="protocol"><option value="all">All protocols</option><option value="http">HTTP</option><option value="https">HTTPS · TLS to proxy</option><option value="socks4">SOCKS4</option><option value="socks5">SOCKS5</option></select></div>
-          <div class="field"><label for="limit">Show</label><select id="limit"><option value="10">Top 10</option><option value="25">25 results</option><option value="50">50 results</option><option value="100">100 results</option></select></div>
+          <div class="field search-field"><label for="search">جست‌وجو</label><input id="search" type="search" placeholder="سرور یا نام منبع" autocomplete="off"></div>
+          <div class="field"><label for="sortBy">ترتیب نتایج</label><select id="sortBy"><option value="score">بهترین رتبه</option><option id="telegram-rtt-sort" value="telegram_p95_ms">کمترین پینگ p95 تلگرام</option><option id="probe-duration-sort" value="avg_latency_ms">زمان آزمون (تشخیصی)</option><option value="success_rate">بیشترین موفقیت نمونه‌ها</option><option id="consistency-sort" value="stability">ثبات آزمون (تشخیصی)</option></select></div>
+          <div class="field" id="protocol-field" hidden><label for="protocol">پروتکل</label><select id="protocol"><option value="all">همهٔ پروتکل‌ها</option><option value="http">HTTP</option><option value="https">HTTPS · TLS to proxy</option><option value="socks4">SOCKS4</option><option value="socks5">SOCKS5</option></select></div>
+          <div class="field" id="link-format-field"><label for="link-format">قالب لینک MTProto</label><select id="link-format"><option value="tg">tg://proxy</option><option value="https">https://t.me/proxy</option></select></div>
+          <div class="field"><label for="limit">نمایش</label><select id="limit"><option value="10">۱۰ تای برتر</option></select></div>
         </div>
-        <ol id="results" class="results" aria-label="Verified proxy results"></ol>
+        <ol id="results" class="results" aria-label="نتایج پروکسی"></ol>
         <div id="empty-state" class="empty-state">
           <span class="empty-mark" aria-hidden="true">—</span>
-          <h3 id="empty-title">No scan yet</h3>
-          <p id="empty-description">Choose MTProto in the terminal, run a scan, then refresh this page.</p>
-          <button class="button quiet" id="clear-filters" type="button" hidden>Clear filters</button>
+          <h3 id="empty-title">هنوز آزمونی انجام نشده</h3>
+          <p id="empty-description">گروه دلخواه را انتخاب کنید و آزمون را شروع کنید.</p>
+          <button class="button quiet" id="clear-filters" type="button" hidden>پاک کردن فیلترها</button>
         </div>
       </section>
 
-      <aside class="terminal-hint" aria-label="Start a scan in the terminal">
-        <div><strong id="terminal-title">Scans start in your terminal.</strong><p id="terminal-description">This dashboard displays saved verified results. Keep its terminal session running.</p></div>
+
+      <section id="personal-library" class="scan-controls" aria-labelledby="library-title" hidden>
+        <h3 id="library-title">منابع و علاقه‌مندی‌های شما</h3>
+        <p class="measurement-note">منابع شخصی همراه آپدیت حفظ می‌شوند. علاقه‌مندی‌ها برای استفاده به بازآزمایی روی همین شبکه نیاز دارند.</p>
+        <details class="health"><summary>منابع این گروه</summary><ul id="library-sources" class="source-list"></ul></details>
+        <div class="control-fields"><div class="field"><label for="source-name">نام منبع</label><input id="source-name" maxlength="120" placeholder="منبع شخصی"></div><div class="field"><label for="source-url">نشانی HTTP(S) منبع</label><input id="source-url" type="url" maxlength="2048" dir="ltr" placeholder="https://example.com/proxies.txt"></div><div class="field"><label for="source-parser">قالب منبع</label><select id="source-parser"><option value="http_txt">متن / لینک</option><option value="http_json">JSON</option></select></div><div class="field" id="source-protocol-field"><label for="source-protocol">نوع پروکسی وب</label><select id="source-protocol"><option>http</option><option>https</option><option>socks4</option><option>socks5</option></select></div></div>
+        <div class="control-actions"><button id="source-add" class="button" type="button">افزودن منبع</button><button id="doctor-download" class="button quiet" type="button">دریافت گزارش عیب‌یابی</button><button id="sources-export" class="button quiet" type="button">دریافت منابع شخصی</button></div>
+        <div class="field"><label for="manual-links">لینک‌های شخصی همین گروه</label><textarea id="manual-links" rows="3" maxlength="3000" dir="ltr"></textarea></div><button id="source-manual" class="button quiet" type="button">وارد کردن لینک‌ها</button>
+        <div class="field"><label for="sources-import">بازیابی فایل منابع شخصی</label><input id="sources-import" type="file" accept="application/json,.json"></div><p class="measurement-note">بازیابی جایگزین منابع شخصی فعلی می‌شود؛ پیش از آن نسخهٔ پشتیبان محلی ذخیره می‌شود.</p>
+        <details class="health"><summary>علاقه‌مندی‌های این شبکه</summary><ul id="library-favourites" class="source-list"></ul><button id="favourites-recheck" class="button" type="button">بازآزمایی علاقه‌مندی‌ها</button></details>
+        <p id="library-feedback" class="control-feedback" role="status" aria-live="polite"></p>
+      </section>
+      <details class="health" id="media-panel"><summary>گزارش آزمون اختیاری مدیا</summary><p class="measurement-note">ورود حساب فقط در ترمینال انجام می‌شود. این بخش فقط گزارش بدون اطلاعات حساب را نمایش می‌دهد.</p><div id="media-report" class="source-list">گزارشی موجود نیست.</div></details>
+
+      <aside class="terminal-hint" aria-label="اجرای آزمون در ترمینال">
+        <div><strong id="terminal-title">فرمان‌های ترمینال</strong><p id="terminal-description">این داشبورد نتایج ذخیره‌شده را نشان می‌دهد. ترمینال آن را باز نگه دارید.</p></div>
         <code id="scan-command" dir="ltr">python main.py best10 --mode mtproto --count ALL</code>
-        <button id="copy-command" class="button quiet" type="button">Copy command</button>
-        <div class="terminal-followups"><button id="copy-resume" class="button quiet" type="button" hidden>Copy resume command</button><button id="copy-recheck" class="button quiet" type="button">Copy recheck command</button></div>
+        <button id="copy-command" class="button quiet" type="button">کپی فرمان</button>
+        <div class="terminal-followups"><button id="copy-resume" class="button quiet" type="button" hidden>کپی فرمان ادامه</button><button id="copy-recheck" class="button quiet" type="button">کپی فرمان بازآزمایی</button></div>
       </aside>
-      <p class="verification-note" id="verification-note">Telegram RTT measures encrypted ping round trips, not download throughput or an authorized messaging session.</p>
+      <p class="verification-note" id="verification-note">پینگ تلگرام زمان پاسخ رمز‌شده است. سرعت دانلود در آزمون اختیاری مدیا جدا سنجیده می‌شود.</p>
     </section>
-    <footer>REVMAMAD <span>Local assets. Separate scans. Verified results.</span></footer>
+    <footer>REVMAMAD <span>پردازش محلی · آزمون جداگانه · شواهد قابل بررسی</span></footer>
   </main>
 
   <dialog id="copy-dialog" aria-labelledby="copy-title">
-    <form method="dialog"><h2 id="copy-title">Copy connection</h2><p>Automatic copying is unavailable. Select this text and use your device’s Copy action.</p><label for="copy-text">Text to copy</label><textarea id="copy-text" readonly rows="5" dir="ltr"></textarea><button class="button" type="submit">Close</button></form>
+    <form method="dialog"><h2 id="copy-title">کپی اتصال</h2><p>Automatic copying is unavailable. Select this text and use your device’s Copy action.</p><label for="copy-text">متن اتصال</label><textarea id="copy-text" readonly rows="5" dir="ltr"></textarea><button class="button" type="submit">بستن</button></form>
   </dialog>
-  <noscript><p class="noscript">Enable JavaScript to view local scan results. All dashboard assets are stored with REVMAMAD.</p></noscript>
+  <noscript><p class="noscript">برای نمایش نتایج محلی، جاوااسکریپت را فعال کنید. فایل‌های داشبورد روی همین دستگاه هستند.</p></noscript>
 </body>
 </html>

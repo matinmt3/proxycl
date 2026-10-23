@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from tester.secrets import normalize_port, normalize_server
 
@@ -15,6 +15,8 @@ class WebProxy:
     port: int
     protocol: str = "http"
     source: str = "unknown"
+
+    source_memberships: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         self.server = normalize_server(self.server)
@@ -36,5 +38,6 @@ class WebProxy:
             "port": self.port,
             "protocol": self.protocol,
             "source": self.source,
+            "source_memberships": list(self.source_memberships),
             "uri": self.uri(),
         }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# REVMAMAD v3.4 - MTProto, Telegram WEB + HTTP/SOCKS installer and launcher.
+# REVMAMAD v4 release candidate - staged updates preserve the previous runtime.
 # Use bash <(curl -fsSL <raw-install-url>) to keep keyboard input available.
 
 set -euo pipefail
@@ -36,7 +36,7 @@ while [[ "$REPO_DIR" == */ && "$REPO_DIR" != / ]]; do
     REPO_DIR="${REPO_DIR%/}"
 done
 
-printf '\n  REVMAMAD v3.4 - MTProto, Telegram WEB + HTTP/SOCKS\n'
+printf '\n  REVMAMAD v4 - MTProto, Telegram WEB + HTTP/SOCKS\n'
 if [[ -e "$REPO_DIR" || -L "$REPO_DIR" ]]; then
     [[ -e "$REPO_DIR/.git" ]] || fail "$REPO_DIR already exists but is not a project checkout. Set REVMAMAD_DIR to another directory."
     command -v git >/dev/null 2>&1 || fail "Git is unavailable. Run 'pkg install git' in Termux and retry."
@@ -49,6 +49,22 @@ if [[ -e "$REPO_DIR" || -L "$REPO_DIR" ]]; then
     EXISTING_CHECKOUT=true
 fi
 
+if "$EXISTING_CHECKOUT"; then
+    [[ -f "$REPO_DIR/main.py" ]] || fail "This legacy nested checkout needs a separate v4 installation. Choose another REVMAMAD_DIR; the existing application and data are unchanged."
+    command -v python >/dev/null 2>&1 || fail "Python is unavailable. Restore the Termux Python package before updating."
+    git check-ref-format --branch "$REPO_BRANCH" >/dev/null || fail "Invalid Git branch name: $REPO_BRANCH"
+    info "Preparing an isolated update; the existing application stays in place..."
+    CLONE_DIR="$(mktemp -d -- "${REPO_DIR}.update.XXXXXX")" || fail "Could not create an update staging directory."
+    git_network clone --depth 1 --single-branch --branch "$REPO_BRANCH" -- "$REPO_URL" "$CLONE_DIR" || fail "Update preparation failed; the installed application is unchanged."
+    [[ -f "$CLONE_DIR/update_bootstrap.py" ]] || fail "This branch has no staged updater; use its documented installer. The existing application is unchanged."
+    python "$CLONE_DIR/update_bootstrap.py" "$REPO_DIR" "$REPO_BRANCH" || fail "Update validation failed. The installed version and personal data were preserved."
+    cleanup
+    CLONE_DIR=""
+    cd -- "$REPO_DIR"
+    [[ -f launcher.py ]] || fail "The validated update has no launcher. Run 'python main.py update --rollback'."
+    exec python launcher.py
+fi
+
 info "Updating the Termux package index..."
 pkg update -y || fail "Package update failed. Run 'pkg update' in Termux; if the mirror is unreachable, use 'termux-change-repo' and retry."
 
@@ -56,10 +72,7 @@ info "Installing Python, pip, Git, and build tools..."
 pkg install -y python python-pip git clang make pkg-config || fail "Package installation failed. Check the error above and retry."
 git check-ref-format --branch "$REPO_BRANCH" >/dev/null || fail "Invalid Git branch name: $REPO_BRANCH"
 
-if "$EXISTING_CHECKOUT"; then
-    info "Updating the existing checkout..."
-    git_network -C "$REPO_DIR" pull --ff-only -- origin "$REPO_BRANCH" || fail "Update failed; the application was not launched. Check connectivity and resolve any Git conflict."
-else
+if ! "$EXISTING_CHECKOUT"; then
     [[ ! -e "$REPO_DIR" && ! -L "$REPO_DIR" ]] || fail "Installation directory appeared while preparing packages. Rerun to inspect that checkout."
     info "Cloning $REPO_URL ($REPO_BRANCH)..."
     mkdir -p -- "$(dirname -- "$REPO_DIR")" || fail "Could not create the installation parent directory. Check storage space and permissions."
@@ -89,4 +102,8 @@ python -c 'import main, httpx, yaml, tqdm; from Crypto.Cipher import AES; AES.ne
 info "Installation complete. Next time run:"
 printf '    cd %q && python main.py\n' "$PWD"
 info "Opening the interactive menu..."
-exec python main.py
+if [[ -f launcher.py ]]; then
+    exec python launcher.py
+else
+    exec python main.py
+fi

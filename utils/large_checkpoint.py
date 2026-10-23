@@ -25,6 +25,7 @@ from utils.scan_state import (
     _timestamp,
     deserialize_result,
     serialize_result,
+    source_memberships,
 )
 from webproxy.models import WebProxy
 
@@ -78,11 +79,13 @@ def _web_candidate(row):
     # A flat, fixed candidate schema avoids generic recursive validation and the
     # double normalization in the MTProto-compatible deserialize_proxy helper.
     fields = {"kind", "server", "port", "protocol", "source"}
-    if not isinstance(row, dict) or set(row) != fields or row["kind"] != "web":
+    if not isinstance(row, dict) or set(row) - {"source_memberships"} != fields or row["kind"] != "web":
         raise ValueError("Invalid SQLite web candidate row")
     source = _text(row["source"], "proxy source", empty=True)
     _without_urls(source)
-    return WebProxy(row["server"], row["port"], row["protocol"], source)
+    proxy = WebProxy(row["server"], row["port"], row["protocol"], source)
+    proxy.source_memberships = source_memberships(row.get("source_memberships", []))
+    return proxy
 
 
 def _candidate_payload(proxy):
@@ -92,6 +95,7 @@ def _candidate_payload(proxy):
         "port": proxy.port,
         "protocol": proxy.protocol,
         "source": proxy.source,
+        "source_memberships": list(getattr(proxy, "source_memberships", [])),
     }
     validated = _web_candidate(row)
     if (validated.server, validated.port, validated.protocol, validated.source) != (

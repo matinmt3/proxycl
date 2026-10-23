@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
 import httpx
 
 from collector.health import SourceHealth, quality_counts, source_identity
+from collector.provenance import merge_groups
 from collector.sources import parse_json_feed, parse_text_blob
 from config.loader import AppConfig, SourceConfig
 from utils.models import Proxy
@@ -25,7 +26,7 @@ class Collector:
         self.source_reports: list[dict] = []
         self.health = SourceHealth(config, "mtproto")
         self._enabled_sources: list[SourceConfig] = []
-        self._source_by_proxy: dict[str, str] = {}
+        self._source_by_proxy: dict[str, list[str]] = {}
         self._collection_completed = False
 
     @property
@@ -44,7 +45,7 @@ class Collector:
                 if identity not in seen
                 else {"checked": 0, "qualified": 0, "strict_qualified": 0}
             )
-            report["quality_attribution"] = "first_source_after_deduplication"
+            report["quality_attribution"] = "all_memberships_non_additive"
             seen.add(identity)
         self.health.record_quality(self._enabled_sources, counts)
         return self.source_reports
@@ -83,10 +84,14 @@ class Collector:
         self, client: httpx.AsyncClient, source: SourceConfig, report: dict | None = None
     ) -> List[Proxy]:
         try:
-            if source.url.startswith("file://"):
+            if hasattr(source, "_manual_text"):
+                text = source._manual_text
+            elif source.url.startswith("file://"):
                 text = await self._read_local_file(source.url)
             else:
                 text = await self._fetch_url(client, source.url)
+            if report is not None:
+                report["fetched"] = True
             if source.type in ("http_json", "json_feed", "github_raw"):
                 proxies = parse_json_feed(text, source.name)
             else:
@@ -143,11 +148,7 @@ class Collector:
         self.source_reports = reports
         self._enabled_sources = enabled
         self._collection_completed = True
-        merged: Dict[str, Proxy] = {}
-        for source, group in zip(enabled, results):
-            for proxy in group:
-                merged.setdefault(proxy.key(), proxy)
-                self._source_by_proxy.setdefault(proxy.key(), source_identity(source))
+        merged, self._source_by_proxy = merge_groups(enabled, results, reports)
 
         logger.info("Collected %d unique proxies from %d sources", len(merged), len(enabled))
         return list(merged.values())

@@ -30,6 +30,16 @@ The primary action is `tg://webproxy`. A WEB-capable Telegram client is required
 
 ## Reference interoperability evidence
 
+For v4 RC, the additional certified-TLS harness passed **8/8 cases** (four carriers × root/subpath). A locally trusted test CA and real TLS frontend were used; the default untrusted-CA path and a wrong hostname were both rejected. Each case transferred 5,120,000 bytes across each of two fresh connections, with a forced drop between them: 81,920,000 payload bytes total. The official Go relay still uses the Windows permission-check-only overlay. These checks use an echo backend; they do not establish a public Telegram route or physical device compatibility.
+
+| Client evidence | Version actually tested | Status |
+| --- | --- | --- |
+| Native REVMAMAD / Python on Windows | 4.0.0-rc.1 / 3.14.6 | Controlled TLS relay contract passed |
+| Telegram Android on a physical phone | None recorded | Pending; no compatibility minimum claimed |
+| Telegram Desktop WEB-capable client | None recorded | Pending |
+
+The following paragraph preserves the earlier v3.4 cleartext harness evidence:
+
 All four carrier profiles passed at the root and at a base path against the pinned official Go relay's actual auth/wire handlers: **8/8 cases**, each echoing **5,120,000 bytes**, beyond the 4 MiB stream window. On Windows the isolated reference build overlaid only Unix permission-bit checks (Windows reports 0666 rather than 0600); those test-only overlays are not shipped in this product. The relay ran on cleartext loopback behind a simulated TLS front and an echo backend. This is controlled wire/flow-control evidence, not an unmodified Linux deployment, public TLS/Telegram session, media download or physical Android pass.
 
 Deterministic tests separately cover certified carrier request policy, malformed bootstrap/upgrade/frame/cursor/window behavior, cancellation, strict Telegram proof and full collector/export/checkpoint/recheck integration. See [release evidence](TESTING.md) for complete suite totals, actual public observations and remaining device limits.
