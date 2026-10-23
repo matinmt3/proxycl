@@ -7,7 +7,7 @@
 - [x] Source provenance, user sources, favourites and Persian dashboard.
 - [x] Doctor, staged updater/rollback and compatible CLI integration.
 - [x] WEB TLS conformance and compatibility evidence.
-- [ ] Independent review and full integrated local verification.
+- [x] Independent review and full integrated local verification.
 - [ ] Build and independently verify extracted release ZIP.
 - [ ] Publish prerelease and verify remote refs and downloaded asset hashes.
 - [ ] Physical Android/Termux/client workflow evidence (external gate).

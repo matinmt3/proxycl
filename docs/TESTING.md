@@ -7,6 +7,8 @@ The integrated source suite passed **1,021 Python tests**, with **9 skips** and 
 
 Ruff and Black passed for the candidate; the final packaging report records extracted-artifact checks. No simulated test represents real account, device or public proxy performance evidence.
 
+An additional **real Windows update smoke test** cloned v3.4, prepared the actual candidate venv and dependencies, passed the candidate selftest, activated 4.0.0-rc.1, then rolled back to 3.4.0. Both protected personal-file hashes were unchanged. This used real Git and Python executables (no runtime mock); Termux execution remains pending.
+
 | Area | Evidence and boundary |
 | --- | --- |
 | Output ownership | Real subprocess lock contention and abnormal process exit, shared CLI/controller/storage tests; POSIX branch unrun on Windows |
