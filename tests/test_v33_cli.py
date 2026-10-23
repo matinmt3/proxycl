@@ -35,6 +35,13 @@ def test_named_network_dashboard_uses_only_its_snapshots(config, monkeypatch):
     assert calls == [str(Path(config.output.folder) / "networks" / "wifi")]
 
 
+def test_run_shows_saved_links_in_selected_network_folder(config, monkeypatch, capsys):
+    monkeypatch.setattr(main, "run_pipeline", lambda cfg, export: [])
+    assert main.main(["run", "--network", "mobile"]) == 0
+    expected = Path(config.output.folder) / "networks" / "mobile" / "mtproto" / "best10_links.txt"
+    assert str(expected) in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(
     "args", [["best10", "--network", "../mobile"], ["dashboard", "--resume"], ["collect", "--resume"]]
 )
@@ -46,7 +53,7 @@ def test_invalid_network_or_resume_command_is_rejected_before_configuration(args
 
 
 def test_menu_can_select_network_resume_and_show_history(config, monkeypatch):
-    choices = iter(["8", "mobile", "7", "2", "9", "2", "6"])
+    choices = iter(["8", "mobile", "7", "2", "1", "9", "2", "6"])
     monkeypatch.setattr(builtins, "input", lambda prompt: next(choices))
     calls = []
     monkeypatch.setattr(
@@ -64,3 +71,49 @@ def test_menu_can_select_network_resume_and_show_history(config, monkeypatch):
         ("resume", True, "mobile", {"mode": "telegram", "limit": None}),
         ("history", False, "mobile", {"mode": "telegram"}),
     ]
+
+
+@pytest.mark.parametrize("resume_choice, command", [("1", "cmd_best10"), ("2", "cmd_recheck")])
+@pytest.mark.parametrize("previous", [False, True])
+def test_menu_routes_resume_choice_and_restores_previous_setting(
+    config, monkeypatch, resume_choice, command, previous
+):
+    config.scan.resume = previous
+    config.scan.network = "mobile"
+    choices = iter(["7", "3", resume_choice, "6"])
+    monkeypatch.setattr(builtins, "input", lambda prompt: next(choices))
+    calls = []
+    monkeypatch.setattr(
+        main,
+        command,
+        lambda cfg, **kwargs: calls.append((cfg.scan.resume, cfg.scan.network, kwargs)),
+    )
+    other = "cmd_recheck" if command == "cmd_best10" else "cmd_best10"
+    monkeypatch.setattr(main, other, lambda *args, **kwargs: pytest.fail("wrong resume command"))
+    assert main.main(["menu"]) == 0
+    assert calls == [(True, "mobile", {"mode": "web", "limit": None})]
+    assert config.scan.resume is previous
+
+
+@pytest.mark.parametrize("exception", [OSError("checkpoint unavailable"), KeyboardInterrupt()])
+def test_menu_recheck_resume_restores_setting_after_failure(config, monkeypatch, exception):
+    choices = iter(["7", "1", "2", "6"])
+    monkeypatch.setattr(builtins, "input", lambda prompt: next(choices))
+
+    def fail(cfg, **kwargs):
+        assert cfg.scan.resume is True
+        raise exception
+
+    monkeypatch.setattr(main, "cmd_recheck", fail)
+    assert main.main(["menu"]) == 0
+    assert config.scan.resume is False
+
+
+@pytest.mark.parametrize("resume_choice", ["0", "invalid"])
+def test_menu_cancel_or_invalid_resume_does_not_run_a_scan(config, monkeypatch, resume_choice):
+    choices = iter(["7", "1", resume_choice, "6"])
+    monkeypatch.setattr(builtins, "input", lambda prompt: next(choices))
+    for command in ("cmd_best10", "cmd_recheck"):
+        monkeypatch.setattr(main, command, lambda *args, **kwargs: pytest.fail("cancelled resume ran"))
+    assert main.main(["menu"]) == 0
+    assert config.scan.resume is False

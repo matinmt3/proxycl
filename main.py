@@ -501,10 +501,16 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
             elif choice == "7":
                 mode = _menu_mode()
                 if mode:
+                    resume_choice = input("Resume: 1) Scan  2) Saved-candidate recheck  0) Back: ").strip()
+                    if resume_choice == "0":
+                        continue
+                    if resume_choice not in ("1", "2"):
+                        raise ValueError("Choose resume 1, 2, or 0 to return")
                     previous = config.scan.resume
                     try:
                         config.scan.resume = True
-                        cmd_best10(config, mode=mode, limit=None)
+                        resume_command = cmd_recheck if resume_choice == "2" else cmd_best10
+                        resume_command(config, mode=mode, limit=None)
                     finally:
                         config.scan.resume = previous
             elif choice == "8":
@@ -625,10 +631,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "run":
             if args.mode == "mtproto" and args.count is None:
                 from exporter.exporter import eligible_results
+                from scan import mode_folder
 
                 print_best10(
                     eligible_results(run_pipeline(config, export=True), config.output),
-                    str(Path(config.output.folder) / "mtproto"),
+                    str(mode_folder(config, "mtproto")),
                 )
             else:
                 cmd_best10(config, mode=args.mode, limit=args.count)
