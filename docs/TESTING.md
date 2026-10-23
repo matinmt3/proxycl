@@ -4,7 +4,7 @@ Validation host: Windows, Python 3.14. Dates and times below are UTC. Determinis
 
 ## Integrated candidate checks
 
-On **2026-10-21**, the integrated **v3.3.0 candidate passed 671 Python tests in 52.01 seconds and 19 Node dashboard-client tests**. Ruff passed, Black accepted all **87 Python files**, and Python compilation, JavaScript/Bash syntax and Git whitespace checks passed. The optional FastAPI test produced one third-party `StarletteDeprecationWarning`; it did not fail.
+On **2026-10-23**, the integrated **v3.3.0 candidate passed 683 Python tests in 61.17 seconds and 19 Node dashboard-client tests**. Ruff passed, Black accepted all **88 Python files**, and Python compilation, JavaScript/Bash syntax and Git whitespace checks passed. The optional FastAPI test produced one third-party `StarletteDeprecationWarning`; it did not fail.
 
 These are the release-wide totals. Focused runs and the native CLI interruption cases are included in that Python suite, not additional tests to add to its count. Protocol tests use controlled peers and fixtures; successful fixtures are not public working proxies.
 
@@ -13,12 +13,12 @@ These are the release-wide totals. Focused runs and the native CLI interruption 
 | Staged Telegram scanning | Transport prefilter is separate from strict evidence; baseline ranking freezes a bounded finalist set; sustained sessions request the configured pongs and rotate DCs; worker counts stay bounded |
 | Completed policy | Default completed staged scans require at least seven successful connections; eight successful connections supply 59 matched pongs; baseline-only candidates cannot bypass finalist testing, including with larger custom baseline budgets |
 | Protocol / rejection | Raw/dd/ee framing, pinned RSA_PAD/DH exchange, MTProto 2.0 encryption, nonce/hash/message-key/auth-ID validation, matched pongs, session/salt/replay/time/sequence checks, containers and bounded key cleanup |
-| Ctrl+C / native CLI | Finished samples and honest failure denominators survive cancellation; native CLI coverage includes both new staged interruption cases and existing mode/menu/scheduler flows; partial output is provisional and preserves the previous completed snapshot |
+| Ctrl+C / native CLI | Finished samples and honest failure denominators survive cancellation; native CLI interruption regressions cover mode/menu/scheduler flows; partial output is provisional and preserves the previous completed snapshot |
 | Checkpoint / resume | Atomic snapshots preserve candidate order, frozen finalists, completed samples and DC rotation; stale, future, corrupt, mismatched and complete state is rejected; current config rebuilds single-stage MT policy; generic disk callbacks are serialized |
 | Large Web checkpoints | SQLite actually round-tripped **100,001 candidates** in a deterministic test; transactional rollback, separate evidence rows, generation/configuration checks and storage failures are covered |
 | Network / history / sources | Named network isolation, bounded history without double-counting a resumed run, fresh saved-candidate rechecks, first-source quality attribution, temporary failure cooldown and later retry |
 | HTTP/SOCKS | HTTP CONNECT, TLS to HTTPS proxies, SOCKS4a/SOCKS5, origin certificate/status checks and no direct connection fallback |
-| CLI / exports | ALL/custom candidate counts, mode isolation, input/EOF handling, strict/provisional labels, composite ranking and consistent eligible top-ten links across console/export formats |
+| CLI / exports | ALL/custom candidate counts, mode isolation, input/EOF handling, strict/provisional labels, composite ranking and consistent eligible top-ten links across console/export formats; named-network Saved paths and menu option 7's Scan/Recheck resume choice were corrected and regression-tested |
 | Dashboard | Strict proof/policy validation, stage and partial counters, history, safe terminal commands, qualified actions, legacy evidence and malformed-data handling; Node tests cover the client behavior |
 | Installer / scheduler | Controlled installer command shims, retained executable/LF requirements, and scheduler loops stopping after an interrupted scan |
 
@@ -40,13 +40,36 @@ The candidate's `python main.py selftest` passed **all eight checks** on the Win
 
 The selftest uses temporary synthetic checkpoint data and opens only local loopback sockets. It launches no browser and contacts no Telegram or public proxy. Its success does not establish Termux package installation, Android browser-intent delivery, live Telegram connectivity or media download performance. The report records those scope flags explicitly.
 
+A separate isolated subprocess harness passed **31 native CLI checks** using local empty sources, including all three modes, saved-output commands, history, benchmark, menu flows and expected rejection of missing recheck/completed Resume evidence. Those 31 checks are separate from the 683-test pytest total.
+
 ## Current external and device status
 
-- **Physical Android/Termux validation is pending.** The user will run the candidate on their phone using [TERMUX-CHECK.md](TERMUX-CHECK.md); no device pass is claimed before that result exists.
-- **Current v3.3 visual/interactive browser validation is pending in this report.** The Python/Node and loopback checks above establish their stated coverage, not a responsive visual browser pass. Historical v3.1 DEMO viewport checks and the interrupted v3.2 browser attempt do not validate the v3.3 interface.
+- **Physical Android/Termux execution and Android browser-intent delivery have not been run.** [TERMUX-CHECK.md](TERMUX-CHECK.md) remains a reproducible device checklist; the Windows and browser results do not establish a phone pass.
 - Docker image/Compose execution has not been run on this host.
 
-## Current bounded live staged sample
+## Current visual and interactive browser checks
+
+On **2026-10-23**, the current v3.3 dashboard was loaded from a real localhost server in the in-app browser using clearly labeled synthetic **DEMO** fixtures. Responsive frames at **320 and 390 CSS pixels** had client widths of **305 and 375 pixels** respectively, including the space taken by scrollbars. In both cases, document `scrollWidth` equaled client width: no horizontal overflow was observed.
+
+Actual browser interactions verified completed strict rows showing eight successful connections and 59 matched pongs, partial **PROVISIONAL** output, search with no matches and clearing the search, the 25-row display choice, copying HTTPS Telegram links and Web proxy URIs, and network/mode-specific Resume and Recheck commands. Recent history, source quality, update Pause/Resume and the Web SOCKS5 protocol filter were checked. The browser JavaScript console contained no errors or warnings during those checks. The partial-result wording was corrected to distinguish baseline-qualified provisional evidence from completed finalist testing.
+
+These fixtures demonstrate rendering and user interactions with known evidence. They contain no live usable proxy claims, and do not measure Telegram connectivity, physical Android layout, Termux installation or Android browser-intent behavior.
+
+## Completed live staged sample on 2026-10-23
+
+A fresh MTProto catalog read at **07:27:43.740–07:27:47.707 UTC** retrieved **2,470 parser-valid unique candidates** from **50 of 51 nonempty remote feeds**; the same HTTP 404 feed named below remained unavailable. All 256 deterministically interleaved transport diagnostics completed in **43.002 seconds**, with 21 positives. The first four positives formed a selected pool for the unchanged default staged tester.
+
+That staged run **completed normally**, without a provisional policy, at **07:29:47.764–07:32:05.850 UTC** in **138.085 seconds**. Two candidates passed the fresh screen; one of those passed the baseline and completed all five finalist attempts. Its **eight of eight successful sessions, 59 matched pongs and DC 2+4 coverage** met the completed minimum of seven successes, 80% observed pass rate, 1,500 ms p95 and 500 ms jitter limits. Its measured p95 was **1261.75 ms** and jitter **96.05 ms**. The faster other candidate had only **two of three successful baseline sessions** and was excluded. Overall, 11 strict attempts yielded ten successful sessions, 65 matched pongs and one `handshake_invalid` failure.
+
+The reports and their SHA-256 values are preserved in the local `work/v3-3/final-qa/live/` evidence folder outside the product. This is a small selected Windows-network interoperability sample, not a representative catalog test, physical phone measurement, media-download benchmark or guarantee of future availability.
+
+## Live HTTP/SOCKS sample on 2026-10-23
+
+At **07:33:19.293–07:33:27.923 UTC**, all **64 configured Web feeds** returned nonempty parser-valid data, yielding **194,465 unique candidates**. A deterministic sample selected eight source-balanced candidates from each of HTTP, HTTPS-to-proxy, SOCKS4 and SOCKS5. All **32 candidates completed three attempts each** in **16.670 seconds**, without reaching the 60-second budget. Probes required a certificate- and hostname-verified HTTPS response with status 204 from the configured origin; direct fallback was not used.
+
+Three HTTP candidates supplied eight successful origin responses: two passed three of three attempts, one passed two of three. None of the selected HTTPS-to-proxy/SOCKS candidates passed on this network. The 88 failures comprised 61 TCP timeouts, 11 handshake timeouts, seven refused connections and nine invalid handshakes. Reports live in local `work/v3-3/final-qa/live-web/` outside the product. Feed readability and this selected sample do not establish catalog-wide endpoint health or physical Android behavior.
+
+## Earlier bounded live staged sample
 
 On **2026-10-21, 09:55:25.873–09:55:29.111**, a fresh catalog read returned **3,080 parser-valid unique MTProto candidates**. **50 of 51 remote feeds** yielded candidates; `V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB/telegram_proxy_no1.txt` returned HTTP 404. The optional manual list was empty. Retrieval health tracking was disabled for this isolated observation; HTTP/SOCKS feeds were not scanned. The captured local report is `work/v3-3/research/source-collection.json` outside the product tree.
 
@@ -89,4 +112,4 @@ Strict Telegram sessions verify server identity and encrypted service replies wi
 
 ## Publication
 
-**v3.3 publication is pending at the time of this report.** Local tests, selftest and archive checks do not establish a public release. Separate publication verification must compare the public repository/tag and raw installer with the checked commit, then download the release assets and compare their sizes/SHA-256 values with the local artifacts. A later public verification report records that outcome independently.
+Local tests, selftest and archive checks do not establish a public release. Separate publication verification compares the public repository/tag and raw installer with the checked commit, then downloads the release assets and compares their sizes/SHA-256 values with the local artifacts. The public verification report records that outcome independently of this test report.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.3.0 — 2026-10-21
+## 3.3.0 — 2026-10-23
 
 - Add default staged Telegram scans: transport prefilter, strict baseline, then up to twenty finalists with five additional sessions, ten pongs per session and reconnect spacing. Completed default scans require at least seven strict successes; interrupted baseline-qualified results are marked provisional.
 - Persist finished evidence and resume recent matching scans across Ctrl+C/restarts. Isolate state by named network and mode, validate configuration/timestamps, and use transactional SQLite above 20,000 Web candidates rather than the small-JSON checkpoint limits. Force a stop-time flush; abrupt process termination can lose the last throttled batch.
@@ -8,6 +8,7 @@
 - Temporarily cool down remote feeds after three consecutive network failures, then retry automatically. Preserve local/manual access, safe metadata, first-source deduplication attribution and collection cancellation semantics. The shipped source catalog remains unchanged.
 - Show stage/progress, provisional evidence, source quality and history in the read-only dashboard, with copyable terminal commands. Add menu actions for resume, profile selection, history and recheck.
 - Add an offline `selftest` command for installed dependencies, AES/IGE, parsing, atomic checkpoint roundtrip and a real loopback dashboard. Record a credential-free JSON report, with live Telegram and Android browser-intent checks explicitly outside its scope. Provide a separate manual Termux checklist; account-authorized media/download testing remains future work.
+- Correct named-network saved-path messages, let menu Resume choose ordinary scans or saved-candidate rechecks, and clearly label unfinished finalist results as provisional baseline evidence.
 
 ## 3.2.0 — 2026-10-21
 
