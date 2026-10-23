@@ -89,7 +89,7 @@ class SchedulerConfig:
 
 @dataclass
 class DashboardConfig:
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8000
 
 
@@ -117,11 +117,23 @@ class ScanConfig:
     source_health_enabled: bool = True
     source_failure_threshold: int = 3
     source_cooldown_minutes: float = 30.0
+    adaptive_workers: bool = True
+    time_budget_seconds: float | None = None
+    finalist_reserve_fraction: float = 0.4
+    refresh_stale_on_resume: bool = True
 
     def validate(self):
         if self.strategy not in ("staged", "single"):
             raise ValueError("scan.strategy must be staged or single")
-        for name in ("prefilter", "resume", "checkpoint_enabled", "history_enabled", "source_health_enabled"):
+        for name in (
+            "prefilter",
+            "resume",
+            "checkpoint_enabled",
+            "history_enabled",
+            "source_health_enabled",
+            "adaptive_workers",
+            "refresh_stale_on_resume",
+        ):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"scan.{name} must be true or false")
         if not isinstance(self.network, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", self.network):
@@ -158,6 +170,12 @@ class ScanConfig:
                 raise ValueError(f"scan.{name} must be between {minimum} and {maximum}")
         if self.resume and not self.checkpoint_enabled:
             raise ValueError("scan.resume requires checkpoint_enabled")
+        if self.time_budget_seconds is not None:
+            budget = _number(self.time_budget_seconds, "scan.time_budget_seconds")
+            if not 0.05 <= budget <= 86400:
+                raise ValueError("scan.time_budget_seconds must be between 0.05 and 86400 or null")
+        if not 0.1 <= _number(self.finalist_reserve_fraction, "scan.finalist_reserve_fraction") <= 0.8:
+            raise ValueError("scan.finalist_reserve_fraction must be between 0.1 and 0.8")
         return self
 
 
@@ -258,6 +276,7 @@ class AppConfig:
     _path: Optional[Path] = None
     web_sources: List[WebSourceConfig] = field(default_factory=list)
     scan: ScanConfig = field(default_factory=ScanConfig)
+    webproxy_sources: List[SourceConfig] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> "AppConfig":
@@ -268,6 +287,7 @@ class AppConfig:
         allowed = {
             "sources",
             "web_sources",
+            "webproxy_sources",
             "source_catalog",
             "testing",
             "scoring",
@@ -288,7 +308,7 @@ class AppConfig:
         if raw.get("source_catalog") is not None:
             location = _text(raw["source_catalog"], "source_catalog")
             catalog = _yaml_mapping(Path(_absolute_path(location, base)), "catalog")
-            unknown_catalog = set(catalog) - {"sources", "web_sources"}
+            unknown_catalog = set(catalog) - {"sources", "web_sources", "webproxy_sources"}
             if unknown_catalog:
                 raise ValueError(
                     f"Unknown catalog section(s): {', '.join(str(key) for key in unknown_catalog)}"
@@ -296,6 +316,10 @@ class AppConfig:
         sources = _sources(raw.get("sources") if "sources" in raw else catalog.get("sources"), "sources")
         web_sources = _sources(
             raw.get("web_sources") if "web_sources" in raw else catalog.get("web_sources"), "web_sources"
+        )
+        webproxy_sources = _sources(
+            raw.get("webproxy_sources") if "webproxy_sources" in raw else catalog.get("webproxy_sources"),
+            "webproxy_sources",
         )
 
         testing = _section(raw, "testing", TestingConfig)
@@ -383,7 +407,7 @@ class AppConfig:
         # their paths against their own containing directory.
         output.folder = _absolute_path(_text(output.folder, "output.folder"), base)
         logging_cfg.log_dir = _absolute_path(_text(logging_cfg.log_dir, "logging.log_dir"), base)
-        for source in [*sources, *web_sources]:
+        for source in [*sources, *web_sources, *webproxy_sources]:
             if source.url.startswith("file://"):
                 local = unquote(source.url[len("file://") :])
                 if not local:
@@ -405,4 +429,5 @@ class AppConfig:
             _path=p,
             web_sources=web_sources,
             scan=scan_cfg,
+            webproxy_sources=webproxy_sources,
         )

@@ -16,7 +16,7 @@ from uuid import UUID, uuid4
 
 from config.loader import AppConfig
 
-MODES = ("mtproto", "telegram", "web")
+MODES = ("mtproto", "telegram", "web", "webproxy")
 
 
 def network_folder(config: AppConfig) -> Path:
@@ -27,7 +27,7 @@ def network_folder(config: AppConfig) -> Path:
 
 def validate_request(mode: str, limit: int | None) -> None:
     if mode not in MODES:
-        raise ValueError("mode must be mtproto, telegram or web")
+        raise ValueError("mode must be mtproto, telegram, web or webproxy")
     if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
         raise ValueError("Candidate count must be a positive integer or ALL")
 
@@ -113,7 +113,7 @@ def _load_checkpoint(config, mode):
         ):
             raise ValueError("Resume pointer mode/network mismatch; start a fresh scan")
     store = _checkpoint_store(config, mode, pointer.get("backend", "json") if pointer else "json")
-    candidates, state = store.load()
+    candidates, state = store.load_for_refresh() if config.scan.refresh_stale_on_resume else store.load()
     context = state.get("context")
     if not isinstance(context, dict) or not isinstance(state.get("engine"), dict):
         raise ValueError("Checkpoint has no scan context; start a fresh scan")
@@ -159,11 +159,15 @@ def _safe_reports(reports):
     return safe
 
 
-def _restore_collection(collector, config, candidates, reports):
+def _restore_collection(collector, config, candidates, reports, mode=None):
     """Restore attribution only where a stored source name is unambiguous."""
     from collector.health import source_identity
 
-    sources = config.web_sources if any(hasattr(p, "protocol") for p in candidates) else config.sources
+    sources = (
+        config.webproxy_sources
+        if mode == "webproxy"
+        else config.web_sources if mode == "web" else config.sources
+    )
     enabled = [source for source in sources if source.enabled]
     names = {}
     for source in enabled:
@@ -183,6 +187,19 @@ def run_scan(
 ) -> ScanOutcome:
     validate_request(mode, limit)
     config.scan.validate()
+    from utils.scan_control import ScanController
+
+    started_clock = time.monotonic()
+    requested_budget = config.scan.time_budget_seconds
+    scan_controller = getattr(config, "_scan_controller", None) or ScanController()
+    command = getattr(config, "_scan_command", "best10")
+    config = replace(config, scan=replace(config.scan))
+    config._scan_controller = scan_controller
+    config._scan_command = command
+    config._scan_collection_deadline = (
+        started_clock + requested_budget if requested_budget is not None else None
+    )
+    config._scan_deadline = config._scan_collection_deadline
     if config.scan.resume and not export:
         raise ValueError("Resume needs checkpoint exports. Use best10 --resume instead of benchmark.")
     if not export:
@@ -192,6 +209,12 @@ def run_scan(
                 config.scan, source_health_enabled=False, checkpoint_enabled=False, history_enabled=False
             ),
         )
+        config._scan_controller = scan_controller
+        config._scan_command = command
+        config._scan_collection_deadline = (
+            started_clock + requested_budget if requested_budget is not None else None
+        )
+        config._scan_deadline = config._scan_collection_deadline
     from benchmark.scorer import rank, score_all
     from exporter.exporter import Exporter, eligible_results
     from utils.interruption import ScanInterrupted
@@ -206,6 +229,16 @@ def run_scan(
             from exporter.telegram import TelegramWebExporter
 
             exporter_type = TelegramWebExporter
+    elif mode == "webproxy":
+        from collector.telegram_webproxy import TelegramWebCollector
+        from exporter.webproxy import TelegramWebProxyExporter
+        from tester.runner import ParallelTester
+
+        collector, tester, exporter_type = (
+            TelegramWebCollector(config),
+            ParallelTester(config),
+            TelegramWebProxyExporter,
+        )
     else:
         from webproxy.collector import WebCollector
         from webproxy.exporter import WebExporter
@@ -222,8 +255,13 @@ def run_scan(
     context = {"run_id": str(uuid4()), "started_at": _now()}
     interrupted = False
     profile = "web" if mode == "web" else config.testing.mtproto_profile
+    refresh_stats = {}
     if config.scan.resume:
         store, selected, restored = _load_checkpoint(config, mode)
+        if config.scan.refresh_stale_on_resume:
+            from utils.resume_refresh import refresh_saved_evidence
+
+            restored, refresh_stats = refresh_saved_evidence(config, selected, restored)
         context = restored["context"]
         previous_limit = context.get("requested_count")
         if limit is not None and limit != previous_limit:
@@ -232,11 +270,14 @@ def run_scan(
             )
         limit = previous_limit
         collected_count = context["collected"]
-        _restore_collection(collector, config, selected, context["source_reports"])
+        _restore_collection(collector, config, selected, context["source_reports"], mode)
         print(f"\n[{mode.upper()}] Resuming saved evidence on network {config.scan.network}.", flush=True)
     else:
         print(f"\n[{mode.upper()}] Collecting source feeds | network={config.scan.network}...", flush=True)
-        candidates = select_candidates(collector.collect(), None)
+        try:
+            candidates = select_candidates(collector.collect(), None)
+        except asyncio.CancelledError as exc:
+            raise KeyboardInterrupt("Collection stopped; previous saved scans are preserved") from exc
         collected_count = len(candidates)
         selected = select_candidates(candidates, limit)
         context.update(
@@ -248,6 +289,8 @@ def run_scan(
             store = _checkpoint_store(
                 config, mode, "sqlite" if mode == "web" and len(selected) > 20_000 else "json"
             )
+    if requested_budget is not None:
+        config.scan.time_budget_seconds = max(0.05, requested_budget - (time.monotonic() - started_clock))
     requested = "ALL" if limit is None else str(limit)
     print(f"Collected: {collected_count} | Selected: {len(selected)} | Request: {requested}", flush=True)
     progress = {
@@ -493,6 +536,7 @@ def run_scan(
         "failure_counts": dict(sorted(failures.items())),
     }
     stage_summary = tester.summary if staged else {}
+    generic_summary = getattr(tester, "summary", {}) if not staged else stage_summary
     summary.update(
         strategy="staged" if staged else "single",
         network=config.scan.network,
@@ -508,7 +552,30 @@ def run_scan(
         finalist_attempts=stage_summary.get("finalist_attempts_completed", 0),
         state_warnings=warnings,
         command=getattr(config, "_scan_command", "best10"),
+        time_budget_seconds=requested_budget,
+        budget_exhausted=bool(generic_summary.get("budget_exhausted", False)),
+        coverage_limited=bool(generic_summary.get("coverage_limited", interrupted)),
+        stop_reason=scan_controller.reason
+        or ("budget" if generic_summary.get("budget_exhausted") else "user" if interrupted else None),
+        resume_refresh=refresh_stats,
     )
+    for field in (
+        "configured_workers",
+        "effective_workers",
+        "active_workers",
+        "pressure_reason",
+        "event_loop_lag_ms",
+        "unexamined_candidates",
+    ):
+        if field in generic_summary:
+            summary[field] = generic_summary[field]
+    examined = (
+        len(selected)
+        if not interrupted
+        else len(selected) - stage_summary.get("unexamined_candidates", len(selected) - len(results))
+    )
+    summary["examined_candidates"] = examined
+    summary["coverage_percent"] = round(100 * examined / len(selected), 2) if selected else 100.0
     if staged:
         summary["prefilter_failure_counts"] = dict(
             Counter(row["reason"] for row in tester.state["prefilter"].values() if not row["passed"])

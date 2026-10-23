@@ -268,12 +268,17 @@ async def test_proxy_strict(
     except ValueError:
         return failed(FailureReason.SECRET_INVALID)
     try:
-        server, port = normalize_server(proxy.server), normalize_port(proxy.port)
+        server, port = normalize_server(getattr(proxy, "host", proxy.server)), normalize_port(proxy.port)
     except ValueError:
         return failed(FailureReason.DNS_ERROR)
     try:
         connection_started = time.perf_counter()
-        reader, writer = await asyncio.wait_for(asyncio.open_connection(server, port), connect_timeout)
+        if getattr(proxy, "protocol", None) == "webproxy":
+            from telegram_webproxy.carrier import open_connection
+
+            reader, writer = await open_connection(proxy, timeout=connect_timeout + handshake_timeout)
+        else:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection(server, port), connect_timeout)
         tcp_latency_ms = (time.perf_counter() - connection_started) * 1000
     except socket.gaierror:
         return failed(FailureReason.DNS_ERROR)
@@ -281,6 +286,10 @@ async def test_proxy_strict(
         return failed(FailureReason.TCP_TIMEOUT)
     except OSError:
         return failed(FailureReason.TCP_REFUSED)
+    except ValueError:
+        return failed(FailureReason.HANDSHAKE_INVALID)
+    except Exception:
+        return failed(FailureReason.UNKNOWN)
     try:
         if secret.domain:
             async with asyncio.timeout(handshake_timeout):
@@ -323,7 +332,7 @@ async def test_proxy_strict(
     except TimeoutError:
         return failed(FailureReason.HANDSHAKE_TIMEOUT)
     except (ValueError, asyncio.IncompleteReadError, OSError) as exc:
-        logger.debug("Strict Telegram verification rejected: %s", exc)
+        logger.debug("Strict Telegram verification rejected: %s", type(exc).__name__)
         return failed(FailureReason.HANDSHAKE_INVALID)
     except Exception:
         return failed(FailureReason.UNKNOWN)
@@ -356,15 +365,20 @@ async def test_proxy_once(
     except ValueError:
         return failed(FailureReason.SECRET_INVALID)
     try:
-        server = normalize_server(proxy.server)
+        server = normalize_server(getattr(proxy, "host", proxy.server))
         port = normalize_port(proxy.port)
     except ValueError:
         return failed(FailureReason.DNS_ERROR)
     try:
         connect_start = time.perf_counter()
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(server, port), timeout=connect_timeout
-        )
+        if getattr(proxy, "protocol", None) == "webproxy":
+            from telegram_webproxy.carrier import open_connection
+
+            reader, writer = await open_connection(proxy, timeout=connect_timeout + handshake_timeout)
+        else:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection(server, port), timeout=connect_timeout
+            )
         tcp_latency_ms = (time.perf_counter() - connect_start) * 1000
     except socket.gaierror:
         return failed(FailureReason.DNS_ERROR)
@@ -372,6 +386,10 @@ async def test_proxy_once(
         return failed(FailureReason.TCP_TIMEOUT)
     except OSError:
         return failed(FailureReason.TCP_REFUSED)
+    except ValueError:
+        return failed(FailureReason.HANDSHAKE_INVALID)
+    except Exception:
+        return failed(FailureReason.UNKNOWN)
     try:
         handshake_start = time.perf_counter()
         await asyncio.wait_for(_exchange_probe(reader, writer, secret), timeout=handshake_timeout)

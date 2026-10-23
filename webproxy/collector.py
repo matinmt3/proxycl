@@ -131,4 +131,11 @@ class WebCollector:
         return list(unique.values())
 
     def collect(self) -> list[WebProxy]:
+        controller = getattr(self.config, "_scan_controller", None)
+        if controller is not None:
+            return asyncio.run(
+                controller.run(
+                    self.collect_async, deadline=getattr(self.config, "_scan_collection_deadline", None)
+                )
+            )
         return asyncio.run(self.collect_async())

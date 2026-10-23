@@ -47,7 +47,7 @@ code, .endpoint, .source-list li, .result-card { overflow-wrap: anywhere; }
 .quiet { background: transparent; }
 .primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .primary:hover { background: #8ff2cb; }
-.mode-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; background: var(--surface); border: 1px solid var(--line); padding: 6px; border-radius: 14px; margin-bottom: 28px; }
+.mode-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; background: var(--surface); border: 1px solid var(--line); padding: 6px; border-radius: 14px; margin-bottom: 28px; }
 .mode-tabs button { border-color: transparent; background: transparent; min-width: 0; font-weight: 700; padding: 11px; }
 .mode-tabs button span { display: inline-block; color: var(--muted); font-size: .8rem; margin-left: 8px; font-weight: 400; }
 .mode-tabs button[aria-selected="true"] { background: var(--surface-raised); border-color: var(--accent); color: var(--accent); }
@@ -63,6 +63,16 @@ code, .endpoint, .source-list li, .result-card { overflow-wrap: anywhere; }
 .progress-heading { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .scan-progress label { display: block; overflow-wrap: anywhere; font-size: .9rem; }
 .scan-progress progress { display: block; width: 100%; height: 12px; margin: 10px 0; accent-color: var(--accent); }
+.scan-controls { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 20px; margin-bottom: 20px; min-width: 0; }
+.control-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.control-fields small { display: block; margin-top: 6px; }
+.control-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.control-actions button { flex: 1 1 140px; }
+.control-feedback { margin-top: 14px; min-height: 48px; overflow-wrap: anywhere; color: var(--muted); }
+.control-feedback.error { color: var(--danger); }
+.button.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+.quality-note { color: var(--accent); border-inline-start: 2px solid var(--accent); padding-inline-start: 10px; font-size: .9rem; margin-top: 12px; }
+@media (max-width: 640px) { .control-fields { grid-template-columns: 1fr; } .scan-controls { padding: 16px; } .mode-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .history-panel { margin: 16px 0 28px; }
 .history-panel .measurement-note { padding: 0 16px; }
 .terminal-followups { display: flex; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; min-width: 0; }
@@ -131,7 +141,6 @@ dialog button { margin-top: 16px; }
   .snapshot-heading .pill { display: none; }
   .mode-tabs button span { display: block; margin: 3px 0 0; }
   .mode-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  #tab-web { grid-column: 1 / -1; }
   .snapshot-info { align-items: flex-start; padding: 16px; flex-direction: column; gap: 10px; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .metric { padding: 14px 16px; }

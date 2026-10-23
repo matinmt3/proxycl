@@ -48,7 +48,8 @@ async def test_worker_pool_bounds_tasks_connections_and_preserves_input_order(mo
     config.testing.retries = 2
     proxies = [Proxy(f"proxy{i}.example", 443, "00112233445566778899aabbccddeeff") for i in range(100)]
     results = await ParallelTester(config).run_async(proxies)
-    assert len(created) == 3 and peak <= 3
+    # One pressure monitor, independent of candidate count, accompanies the pool.
+    assert len(created) == 4 and peak <= 3
     assert [result.proxy for result in results] == proxies
     assert all(result.attempts == 2 for result in results)
     assert bar.closed and bar.updated == 100

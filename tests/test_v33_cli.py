@@ -30,9 +30,12 @@ def test_named_network_dashboard_uses_only_its_snapshots(config, monkeypatch):
 
     config.scan.network = "wifi"
     calls = []
-    monkeypatch.setattr(server, "run", lambda host, port, folder, **kwargs: calls.append(folder))
+    monkeypatch.setattr(
+        server, "run", lambda host, port, folder, **kwargs: calls.append((folder, kwargs.get("controller")))
+    )
     assert main.cmd_dashboard(config, open_browser=False)
-    assert calls == [str(Path(config.output.folder) / "networks" / "wifi")]
+    assert calls[0][0] == str(Path(config.output.folder))
+    assert calls[0][1].status()["network"] == "wifi"
 
 
 def test_run_shows_saved_links_in_selected_network_folder(config, monkeypatch, capsys):

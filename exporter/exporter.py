@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import List
 
 from config.loader import OutputConfig
+from telegram_webproxy.models import TelegramWebProxy
 from utils.models import Proxy, ProxyResult
 
 logger = logging.getLogger("mtselector.exporter")
@@ -23,7 +24,7 @@ def eligible_results(results: List[ProxyResult], output_cfg: OutputConfig) -> Li
         r
         for r in results
         if (
-            not isinstance(r.proxy, Proxy)
+            not isinstance(r.proxy, (Proxy, TelegramWebProxy))
             or (
                 r.strict_eligible
                 and r.strict_successes >= output_cfg.mtproto_min_successes

@@ -27,7 +27,7 @@ def cli_config(config, monkeypatch):
     return config
 
 
-@pytest.mark.parametrize("flag, expected", [("--help", "--no-browser"), ("--version", "REVMAMAD 3.3.0")])
+@pytest.mark.parametrize("flag, expected", [("--help", "--no-browser"), ("--version", "REVMAMAD 3.4.0")])
 def test_help_and_version_work_without_any_installed_packages(tmp_path, flag, expected):
     result = subprocess.run(
         [sys.executable, "-S", str(main.PROJECT_ROOT / "main.py"), flag],
@@ -68,7 +68,7 @@ def test_menu_exercises_every_action_and_returns_after_dashboard(cli_config, mon
         ("collect", {"mode": "web"}),
     ]
     output = capsys.readouterr().out
-    assert "REVMAMAD v3.3.0" in output and "Invalid choice" in output and "Bye!" in output
+    assert "REVMAMAD v3.4.0" in output and "Invalid choice" in output and "Bye!" in output
 
 
 def test_menu_survives_action_failure_and_interrupt(cli_config, monkeypatch, capsys):
@@ -142,7 +142,7 @@ def test_banner_fits_32_column_termux(monkeypatch, capsys):
     lines = capsys.readouterr().out.splitlines()
     assert max(map(len, lines)) <= 32
     assert any("#" in line for line in lines)
-    assert "REVMAMAD v3.3.0" in lines
+    assert "REVMAMAD v3.4.0" in lines
 
 
 def make_result(server, *, success, failure=FailureReason.NONE, latency=100):
@@ -202,9 +202,9 @@ def test_dashboard_receives_custom_output_and_browser_choice(config, monkeypatch
     calls = []
     monkeypatch.setattr(server, "run", lambda *args, **kwargs: calls.append((args, kwargs)))
     assert main.cmd_dashboard(config, open_browser=False) is True
-    assert calls == [
-        ((config.dashboard.host, config.dashboard.port, config.output.folder), {"open_browser": False})
-    ]
+    assert calls[0][0] == (config.dashboard.host, config.dashboard.port, config.output.folder)
+    assert calls[0][1]["open_browser"] is False
+    assert calls[0][1]["controller"].status()["network"] == config.scan.network
 
 
 def test_empty_scan_replaces_stale_output(config, monkeypatch):

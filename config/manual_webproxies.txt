@@ -1,0 +1,3 @@
+# Paste tg://webproxy?server=HOST&secret=SECRET links here.
+# WEB requires implicit HTTPS port 443 and a client that supports this proxy type.
+# Ordinary t.me/proxy and HTTP/SOCKS entries belong in their separate modes.

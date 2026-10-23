@@ -9,11 +9,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from config.loader import ScanConfig
 from tester.secrets import decode_secret, normalize_port, normalize_server
 
 DEFAULT_OUTPUT_FOLDER = Path(__file__).resolve().parents[1] / "output"
 DEFAULT_DATA_FILE = DEFAULT_OUTPUT_FOLDER / "proxy.json"  # v2 compatibility
-MODES = ("mtproto", "telegram", "web")
+MODES = ("mtproto", "telegram", "webproxy", "web")
 PROTOCOLS = ("http", "https", "socks4", "socks5")
 SORT_FIELDS = ("score", "avg_latency_ms", "success_rate", "stability", "telegram_p95_ms")
 COUNT_FIELDS = ("collected", "selected", "tested", "verified", "eligible", "displayed")
@@ -34,7 +35,7 @@ def number(value):
 
 def validate_mode(mode: str) -> str:
     if mode not in MODES:
-        raise ValueError("mode must be mtproto, telegram, or web")
+        raise ValueError("mode must be mtproto, telegram, webproxy, or web")
     return mode
 
 
@@ -107,11 +108,15 @@ def _endpoint_key(row: dict, mode: str) -> str:
     if mode == "web":
         host = f"[{server}]" if ":" in server else server
         return f"{row.get('protocol', '')}://{host}:{row.get('port', '')}"
+    if mode == "webproxy":
+        return f"webproxy:{server}:443:{row.get('secret', '')}"
     return f"{server}:{row.get('port', '')}:{row.get('secret', '')}"
 
 
 def _safe_action(row: dict, mode: str, *, require_secret: bool = False) -> str | None:
-    value = row.get({"mtproto": "tg_link", "telegram": "web_link", "web": "uri"}[mode])
+    value = row.get(
+        {"mtproto": "tg_link", "telegram": "web_link", "webproxy": "web_link", "web": "uri"}[mode]
+    )
     if not isinstance(value, str) or len(value) > 2048 or any(ord(char) <= 32 for char in value):
         return None
     try:
@@ -122,7 +127,17 @@ def _safe_action(row: dict, mode: str, *, require_secret: bool = False) -> str |
             return None
         if parsed.fragment or parsed.username is not None or parsed.password is not None:
             return None
-        if mode == "web":
+        if mode == "webproxy":
+            from telegram_webproxy.models import TelegramWebProxy
+            from telegram_webproxy.parser import parse_line
+
+            if parsed.scheme != "https" or parsed.hostname not in ("t.me", "telegram.me"):
+                return None
+            proxy = parse_line(value)
+            expected = TelegramWebProxy(row["server"], row["secret"], port=port)
+            if proxy is None or proxy.key() != expected.key() or row.get("protocol") != "webproxy":
+                return None
+        elif mode == "web":
             if (
                 parsed.scheme not in PROTOCOLS
                 or parsed.scheme != row.get("protocol")
@@ -185,11 +200,21 @@ def _rows(rows: list, mode: str, profile: str = "transport") -> list[dict]:
             item["verification_profile"] = "telegram_session" if qualified else "transport"
             item["strict_eligible"] = qualified
             item.pop("uri", None)
-            item.pop("protocol", None)
-            item["tg_link"] = (
-                _safe_action(row, "mtproto", require_secret=mode == "telegram") if qualified else None
-            )
-            if mode == "telegram" or "web_link" in item:
+            if mode == "webproxy":
+                item["protocol"] = "webproxy"
+                item["web_link"] = _safe_action(row, mode) if qualified else None
+                if qualified and item["web_link"]:
+                    from telegram_webproxy.parser import parse_line
+
+                    item["tg_link"] = parse_line(item["web_link"]).tg_link()
+                else:
+                    item["tg_link"] = None
+            else:
+                item.pop("protocol", None)
+                item["tg_link"] = (
+                    _safe_action(row, "mtproto", require_secret=mode == "telegram") if qualified else None
+                )
+            if mode != "webproxy" and (mode == "telegram" or "web_link" in item):
                 item["web_link"] = _safe_action(row, "telegram") if qualified else None
         else:
             item.pop("tg_link", None)
@@ -389,6 +414,10 @@ def _saved_snapshot(output_folder: str | Path, mode: str = "mtproto") -> dict:
                 or not len(raw["rows"]) <= strict_count <= reachable <= raw["summary"]["tested"]
                 or raw["summary"]["verified"] != strict_count
                 or not all(_strict_qualified(row) for row in raw["rows"])
+                or mode == "webproxy"
+                and any(
+                    row.get("kind") != "webproxy" or row.get("protocol") != "webproxy" for row in raw["rows"]
+                )
             ):
                 raise ValueError("Invalid strict verification evidence")
         reports = []
@@ -562,7 +591,7 @@ def stats(path: Path, mode: str = "mtproto"):
 
 def api_response(route: str, output_folder: Path, parameters: dict[str, list[str]]):
     """Shared query validation and data semantics for stdlib and FastAPI."""
-    allowed = {"mode"}
+    allowed = {"mode", "network"}
     if route == "/api/proxies":
         allowed.update({"search", "sort_by", "order", "limit", "protocol"})
     if set(parameters) - allowed or any(len(values) != 1 for values in parameters.values()):
@@ -572,6 +601,12 @@ def api_response(route: str, output_folder: Path, parameters: dict[str, list[str
         return parameters.get(key, [default])[0]
 
     mode = validate_mode(value("mode", "mtproto"))
+    if "network" in parameters:
+        network = ScanConfig(network=value("network", "default")).validate().network
+        base = Path(output_folder)
+        if base.parent.name == "networks" and _network_label(base.name):
+            base = base.parent.parent
+        output_folder = base if network == "default" else base / "networks" / network
     current = snapshot(output_folder, mode)
     if route == "/api/snapshot":
         return current
@@ -705,11 +740,22 @@ def _history(folder, mode, network):
             ):
                 raise ValueError("Invalid history identity")
             identities.add(identity)
-            server, port = normalize_server(row.get("server")), normalize_port(row.get("port"))
-            kind = "web" if mode == "web" else "mtproto"
+            if mode == "webproxy":
+                from telegram_webproxy.models import normalize_address
+
+                host, path = normalize_address(row.get("server"))
+                server = host + ("/" + path if path else "")
+            else:
+                server = normalize_server(row.get("server"))
+            port = normalize_port(row.get("port"))
+            if mode == "webproxy" and port != 443:
+                raise ValueError("Invalid WEB history port")
+            kind = "web" if mode == "web" else "webproxy" if mode == "webproxy" else "mtproto"
             if row.get("kind") != kind or type(row.get("qualified")) is not bool:
                 raise ValueError("Invalid history kind")
-            if row.get("protocol") not in (PROTOCOLS if mode == "web" else ("mtproto",)):
+            if row.get("protocol") not in (
+                PROTOCOLS if mode == "web" else ("webproxy",) if mode == "webproxy" else ("mtproto",)
+            ):
                 raise ValueError("Invalid history protocol")
             for key in ("successes", "attempts", "run_count", "historical_successes", "historical_attempts"):
                 if type(row.get(key)) is not int or not 0 <= row[key] <= 10_000_000:

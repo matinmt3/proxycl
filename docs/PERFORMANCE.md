@@ -1,8 +1,8 @@
 # Telegram protocol and measurement notes
 
-## Staged verification in version 3.3
+## Staged verification in versions 3.3 and 3.4
 
-Both MTProto and Telegram HTTPS-share-link modes use `testing.mtproto_profile: telegram_session`. After raw, dd or ee transport setup, each strict connection completes RSA_PAD/DH key creation against pinned Telegram RSA keys and validates encrypted MTProto 2.0 ping replies. See Telegram's [key-creation protocol](https://core.telegram.org/mtproto/auth_key), [encrypted-message format](https://core.telegram.org/mtproto/description) and [service messages](https://core.telegram.org/mtproto/service_messages).
+MTProto, Telegram HTTPS-share-link and Telegram WEB relay modes use `testing.mtproto_profile: telegram_session`. After raw/dd/ee setup for ordinary MTProxy, or raw/dd setup over the WEB relay, each strict connection completes RSA_PAD/DH key creation against pinned Telegram RSA keys and validates encrypted MTProto 2.0 ping replies. See Telegram's [key-creation protocol](https://core.telegram.org/mtproto/auth_key), [encrypted-message format](https://core.telegram.org/mtproto/description) and [service messages](https://core.telegram.org/mtproto/service_messages).
 
 The default `scan.strategy: staged` has three separate stages:
 
@@ -68,7 +68,7 @@ Strict scores use reconnect confidence, p95 RTT and ping jitter, with common ord
 
 `--resume` restores only a matching mode/network/configuration and its saved candidate order/finished samples. It does not recollect a different pool. Configuration fingerprints include scan semantics and source identities; a changed strategy, source list or testing policy requires a fresh scan. A backend pointer ties the checkpoint to its run generation so an old JSON/SQLite alternative is not silently selected.
 
-The default age limit is 30 minutes. Validation includes `created_at`, run context/start time and the oldest saved sample, not just the most recent file modification. An active ALL scan can continue saving and finish after that limit, but later resume can be refused as stale. The configured maximum is 1,440 minutes. Future timestamps, corrupt rows, duplicate candidates/results and complete checkpoints are rejected on resume; restored rankings are recomputed from validated samples.
+The default evidence age limit is 30 minutes, configurable up to 1,440. Default Smart Resume loads an incomplete matching pool for at most seven days from its original creation, discards expired candidate evidence and resets stale screening decisions before remeasurement. Fresh samples can remain. Disabling `refresh_stale_on_resume` restores strict rejection based on creation, run context/start time and oldest evidence; modification time alone never establishes freshness. Future timestamps, corrupt rows, duplicate candidates/results and complete checkpoints are rejected on resume; restored rankings are recomputed from validated samples.
 
 Small checkpoints use bounded atomic JSON (100,000 candidates / 64 MiB). Web pools above 20,000 selected candidates use SQLite transactions, separate candidate/result rows and updates only for changed rows. SQLite caps candidates at one million, individual metadata/evidence rows at 2 MiB and its database at 4 GiB. These limits do not promise phone RAM or scan speed: candidate/result lists still exist in memory. Start with a small candidate count on a phone; default MTProto strict concurrency is 16, finalist concurrency four, and HTTP/SOCKS workers have separate platform caps. Connect, authorization, ping and cleanup waits are bounded.
 
@@ -82,8 +82,20 @@ History records at most 1,000 ranked observations per run, with at most 1,000 ru
 
 Three consecutive remote HTTP/network fetch failures cause a 30-minute cooldown, followed by automatic retry. Empty feeds reset the streak; parser/size failures and manual local files do not quarantine a source. Tested/qualified counts credit only the first deduplicated source; resume restores attribution only for an unambiguous stored source name. A valid, nonempty feed still does not prove its endpoints work. Source-health IO failures warn without stopping collection.
 
-The dashboard is read-only. It reads progress, results, source quality and bounded history, and provides terminal commands to copy. Refresh/pause affects polling, not the scan process; there are no dashboard POST controls to start or stop probes. Current interrupted snapshots preserve the previous full `completed_snapshot.json`.
+The standard loopback dashboard reads progress/results/source quality/history and provides authenticated POST controls for start, stop, resume and recheck. Only one owned callback job runs at a time. Network/count/time inputs, exact Host/Origin, local peer and a per-server header token are validated. Non-loopback configurations, `--read-only` and the optional ASGI adapter stay read-only. Refresh/pause affects polling; Stop & save requests scan cancellation. Interrupted snapshots preserve the previous full `completed_snapshot.json`.
 
 The installed-device `selftest` checks imports, AES/IGE runtime behavior, parsing, atomic checkpoint restoration and actual loopback dashboard HTTP routes. It contacts no Telegram/public proxy, launches no browser and claims no Android intent validation. Follow [TERMUX-CHECK.md](TERMUX-CHECK.md) for those manual checks. Actual deterministic, live-network and device evidence belongs separately in [TESTING.md](TESTING.md).
 
 Additional references: [Telegram transports](https://core.telegram.org/mtproto/mtproto-transports), official TDLib [TLS initialization](https://github.com/tdlib/td/blob/master/td/mtproto/TlsInit.cpp) and [TCP transport](https://github.com/tdlib/td/blob/master/td/mtproto/TcpTransport.cpp).
+
+## Version 3.4 budget, pressure and evidence freshness
+
+`scan.time_budget_seconds` is an admission/probe deadline, measured from before collection. Initial checkpoint writes consume that same budget; they cannot grant the engine a second timebox. Final cleanup and atomic result persistence are outside the hard network-admission deadline. A collection-time stop preserves the previous snapshot because no selected pool has been established yet.
+
+Staged scans allot initial screening and baseline windows and reserve `finalist_reserve_fraction` (default 0.4) for finalists. Only completed attempts enter evidence. The entire selected pool stays resumable; unfinished stages/coverage are provisional even if a candidate already completed its sustained observations. Resume does not repeat an already-finished finalist solely because another candidate remained pending.
+
+Adaptive workers respond to measured local event-loop lag. Two stalls at or above 100 ms reduce admission, and ten calm observations recover one slot up to the configured/platform cap. Termux starts conservatively (2–8 slots, bounded by CPUs and requested workers). Remote proxy failures are not a CPU-pressure signal. Telemetry records configured/effective/active workers, lag and reason. This is an event-loop responsiveness control, not a temperature or battery sensor.
+
+Smart Resume retains the original pool for at most seven days. If any saved sample for a candidate exceeds the configured evidence lifetime, all its saved samples are discarded and the candidate is tested again. Fresh evidence remains subject to the current strict policy. Expired screening decisions are reset; history never supplies live qualification. Set `refresh_stale_on_resume: false` to retain strict checkpoint-age rejection.
+
+Telegram WEB uses the same strict verifier after the relay stream is established. The Python native TLS fingerprint differs from an official client's platform WebView. Interoperability and responsive pongs cannot guarantee identical filtering behavior or media throughput on a phone. See [WEB protocol notes](TELEGRAM-WEB.md).

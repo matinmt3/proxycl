@@ -1,7 +1,7 @@
 # REVMAMAD - Configuration
 
-# Defaults: 51 MTProto remote feeds, one manual list, and 64 Web feeds.
-# Explicit sources: [] or web_sources: [] disables that mode independently.
+# Defaults: 51 MTProto feeds, 64 HTTP/SOCKS feeds, and a separate WEB operator/manual catalog.
+# Explicit sources: [], web_sources: [] or webproxy_sources: [] disables only its own catalog.
 # An external configuration uses a catalog only when it names source_catalog.
 source_catalog: config/sources.yaml
 
@@ -38,6 +38,10 @@ scan:
   source_health_enabled: true
   source_failure_threshold: 3
   source_cooldown_minutes: 30
+  adaptive_workers: true
+  time_budget_seconds: null  # CLI --minutes 3, 10 or 20; null keeps ALL unbounded
+  finalist_reserve_fraction: 0.4
+  refresh_stale_on_resume: true  # preserve candidate pool, rerun expired proof
 
 # Scoring weights (must sum to 1.0, values are checked/normalized at runtime)
 scoring:
@@ -68,7 +72,7 @@ scheduler:
 
 # Dashboard
 dashboard:
-  host: "0.0.0.0"
+  host: "127.0.0.1"  # local scan controls; use a read-only server for LAN access
   port: 8000
 
 # Logging

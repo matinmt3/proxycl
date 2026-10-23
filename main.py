@@ -18,7 +18,7 @@ from pathlib import Path
 from config.loader import AppConfig
 from utils.logger import setup_logger
 
-__version__ = "3.3.0"
+__version__ = "3.4.0"
 PROJECT_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
@@ -62,7 +62,7 @@ def print_banner():
     if width >= 31:
         print("\n".join(art))
     print(f"REVMAMAD v{__version__}")
-    print("Telegram Links + HTTP / SOCKS")
+    print(textwrap.fill("MTProto + Telegram WEB + HTTP / SOCKS", width=width))
     print("=" * min(width, 40) + end)
 
 
@@ -94,6 +94,23 @@ def run_pipeline(config: AppConfig, export: bool = True, *, mode: str = "mtproto
     if outcome.summary.get("provisional"):
         _message(
             "PROVISIONAL: sustained finalist testing did not finish. These are strict observations so far."
+        )
+    if outcome.summary.get("time_budget_seconds") is not None:
+        _message(
+            f"Time budget: {outcome.summary['time_budget_seconds'] / 60:g} min | Candidate coverage: {outcome.summary.get('coverage_percent', 0):g}%"
+        )
+    if outcome.summary.get("budget_exhausted"):
+        _message(
+            "Time budget reached. Finished samples are saved; use Resume to continue the candidate pool."
+        )
+    if outcome.summary.get("resume_refresh", {}).get("refreshed"):
+        refreshed = outcome.summary["resume_refresh"]
+        _message(
+            f"Expired proof discarded: {refreshed.get('stale_candidates', 0)} candidates are being tested afresh; candidate order was preserved."
+        )
+    if "effective_workers" in outcome.summary:
+        _message(
+            f"Worker limit: {outcome.summary['effective_workers']} | Local pressure: {outcome.summary.get('pressure_reason', 'configured_limit')}"
         )
     if outcome.summary.get("strategy") == "staged":
         _message(
@@ -203,6 +220,10 @@ def cmd_collect(config: AppConfig, *, mode: str = "mtproto", limit: int | None =
         from collector.collector import Collector
 
         collector = Collector(config)
+    elif mode == "webproxy":
+        from collector.telegram_webproxy import TelegramWebCollector
+
+        collector = TelegramWebCollector(config)
     else:
         from webproxy.collector import WebCollector
 
@@ -253,7 +274,8 @@ def cmd_recheck(config: AppConfig, *, mode: str = "mtproto", limit: int | None =
                 continue
             candidate = deserialize_proxy(
                 {
-                    "kind": "web" if mode == "web" else "mtproto",
+                    "kind": "webproxy" if mode == "webproxy" else "web" if mode == "web" else "mtproto",
+                    **({"protocol": row.get("protocol")} if mode == "webproxy" else {}),
                     **{
                         key: row[key]
                         for key in ("server", "port", "protocol" if mode == "web" else "secret")
@@ -273,10 +295,14 @@ def cmd_recheck(config: AppConfig, *, mode: str = "mtproto", limit: int | None =
     elif not candidate_file.is_file():
         raise ValueError("No saved recheck candidate file. Start a fresh recheck.")
     prepared = replace(config, scan=replace(config.scan, source_health_enabled=False))
+    if hasattr(config, "_scan_controller"):
+        prepared._scan_controller = config._scan_controller
     source_type = WebSourceConfig if mode == "web" else SourceConfig
     selected_sources = [source_type("saved-top", "http_text", "file://" + str(candidate_file))]
     if mode == "web":
         prepared.web_sources = selected_sources
+    elif mode == "webproxy":
+        prepared.webproxy_sources = selected_sources
     else:
         prepared.sources = selected_sources
     prepared._scan_command = "recheck"
@@ -299,16 +325,72 @@ def cmd_dashboard(config: AppConfig, *, open_browser: bool = True) -> bool:
     from dashboard.server import run
     from scan import network_folder
 
+    controller = None
+    folder = str(network_folder(config))
+    if not getattr(config, "_dashboard_read_only", False) and config.dashboard.host in (
+        "127.0.0.1",
+        "localhost",
+    ):
+        from dashboard.control import ScanController as DashboardController
+        from utils.scan_control import ScanController
+
+        def execute(prepared, mode, limit, command, resume, stop_event):
+            prepared._scan_controller = ScanController(stop_event=stop_event)
+            prepared.scan.resume = resume
+            try:
+                complete = (cmd_recheck if command == "recheck" else cmd_best10)(
+                    prepared, mode=mode, limit=limit
+                )
+            except KeyboardInterrupt:
+                stop_event.set()
+                return False
+            if complete is False:
+                stop_event.set()
+            return complete
+
+        controller = DashboardController(config, execute)
+        folder = config.output.folder
+    elif not getattr(config, "_dashboard_read_only", False):
+        _message("Scan controls require a loopback dashboard. This binding serves read-only results.")
+
     try:
         run(
-            config.dashboard.host,
+            "127.0.0.1" if controller is not None else config.dashboard.host,
             config.dashboard.port,
-            str(network_folder(config)),
+            folder,
             open_browser=open_browser,
+            **({"controller": controller} if controller is not None else {}),
         )
     except KeyboardInterrupt:
         print("\nDashboard stopped.")
+    finally:
+        if controller is not None:
+            controller.close()
     return True
+
+
+def cmd_add_webproxy(config, link):
+    from collector.telegram_webproxy import parse_feed
+    from exporter.exporter import Exporter
+    from telegram_webproxy.parser import parse_line
+
+    proxy = parse_line(link, "manual-webproxy")
+    if proxy is None:
+        raise ValueError("Use a valid tg://webproxy?server=...&secret=... link from a WEB operator.")
+    sources = [
+        source for source in config.webproxy_sources if source.enabled and source.url.startswith("file://")
+    ]
+    if not sources:
+        raise ValueError("Configure an enabled file:// source under webproxy_sources before importing links.")
+    path = Path(sources[0].url[len("file://") :])
+    content = path.read_text(encoding="utf-8-sig") if path.exists() else ""
+    if len(content.encode("utf-8")) > 4 * 1024 * 1024:
+        raise ValueError("The manual WEB source exceeds 4 MiB.")
+    if proxy.key() not in {row.key() for row in parse_feed(content, sources[0].name)}:
+        Exporter(replace(config.output, folder=str(path.parent)))._write(
+            path.name, content.rstrip() + "\n" + proxy.tg_link() + "\n"
+        )
+    _message("WEB link saved. Run: python main.py best10 --mode webproxy")
 
 
 def cmd_scheduler(config: AppConfig, *, mode: str = "mtproto", limit: int | None = None):
@@ -418,12 +500,12 @@ def _network_name(value: str) -> str:
 
 
 def _menu_mode() -> str | None:
-    value = input("Mode: 1) MTProto  2) Telegram Web Link  3) HTTP / SOCKS  0) Back: ").strip()
+    value = input("Mode: 1) MTProto  2) Telegram links  3) HTTP / SOCKS  4) Telegram WEB  0) Back: ").strip()
     if value == "0":
         return None
-    if value not in ("1", "2", "3"):
-        raise ValueError("Choose mode 1, 2, 3, or 0 to return")
-    return {"1": "mtproto", "2": "telegram", "3": "web"}[value]
+    if value not in ("1", "2", "3", "4"):
+        raise ValueError("Choose mode 1, 2, 3, 4, or 0 to return")
+    return {"1": "mtproto", "2": "telegram", "3": "web", "4": "webproxy"}[value]
 
 
 def _error(exc: Exception, config: AppConfig | None = None):
@@ -471,8 +553,13 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
         print(f"8) Network profile: {config.scan.network}")
         print("9) View network history")
         print("10) Recheck saved top connections")
+        print("11) Test Telegram WEB proxies (tg://webproxy)")
+        print("12) Add a Telegram WEB link")
+        print(
+            f"13) Testing time: {config.scan.time_budget_seconds / 60 if config.scan.time_budget_seconds else 'unlimited'} minutes"
+        )
         try:
-            choice = input("\nChoose (1-10): ").strip()
+            choice = input("\nChoose (1-13): ").strip()
         except EOFError:
             _message("No keyboard input. Run a direct command, e.g. python main.py best10")
             return
@@ -480,8 +567,8 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
             print("\nBye!")
             return
         try:
-            if choice in ("1", "2", "3"):
-                mode = {"1": "mtproto", "2": "telegram", "3": "web"}[choice]
+            if choice in ("1", "2", "3", "11"):
+                mode = {"1": "mtproto", "2": "telegram", "3": "web", "11": "webproxy"}[choice]
                 count = choose_count(mode)
                 if count != "back":
                     cmd_best10(config, mode=mode, limit=count)
@@ -489,10 +576,13 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
                 cmd_dashboard(config, open_browser=open_browser)
             elif choice == "5":
                 mode_choice = input(
-                    "Collect: 1) MTProto  2) Telegram Web Link  3) HTTP / SOCKS  0) Back: "
+                    "Collect: 1) MTProto  2) Telegram links  3) HTTP / SOCKS  4) Telegram WEB  0) Back: "
                 ).strip()
-                if mode_choice in ("1", "2", "3"):
-                    cmd_collect(config, mode={"1": "mtproto", "2": "telegram", "3": "web"}[mode_choice])
+                if mode_choice in ("1", "2", "3", "4"):
+                    cmd_collect(
+                        config,
+                        mode={"1": "mtproto", "2": "telegram", "3": "web", "4": "webproxy"}[mode_choice],
+                    )
                 elif mode_choice != "0":
                     print("Invalid choice. Returning to the menu.")
             elif choice == "6":
@@ -526,8 +616,16 @@ def interactive_menu(config: AppConfig, *, open_browser: bool = True):
                 mode = _menu_mode()
                 if mode:
                     cmd_recheck(config, mode=mode)
+            elif choice == "12":
+                link = input("Telegram WEB link (0 = back): ").strip()
+                if link != "0":
+                    cmd_add_webproxy(config, link)
+            elif choice == "13":
+                duration = input("Testing minutes: 3 / 10 / 20 / custom; 0 = unlimited: ").strip()
+                config.scan.time_budget_seconds = None if duration == "0" else _minutes(duration) * 60
+                config.scan.validate()
             else:
-                print("Invalid choice. Type a number from 1 to 10.")
+                print("Invalid choice. Type a number from 1 to 13.")
         except KeyboardInterrupt:
             print("\nCancelled. Returning to the menu.")
         except EOFError:
@@ -551,6 +649,16 @@ def _candidate_count(value: str) -> int | None:
     return None if value.casefold() == "all" else _positive_int(value)
 
 
+def _minutes(value: str) -> float:
+    try:
+        minutes = float(value)
+        if not math.isfinite(minutes) or not 0.01 <= minutes <= 1440:
+            raise ValueError
+        return minutes
+    except (ValueError, TypeError) as exc:
+        raise argparse.ArgumentTypeError("Minutes must be a finite number between 0.01 and 1440") from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, epilog="No command opens the interactive menu.")
     parser.add_argument(
@@ -572,6 +680,7 @@ def main(argv: list[str] | None = None) -> int:
             "history",
             "selftest",
             "recheck",
+            "add-webproxy",
         ),
     )
     parser.add_argument(
@@ -586,9 +695,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"REVMAMAD {__version__}")
     parser.add_argument(
         "--mode",
-        choices=("mtproto", "telegram", "web"),
+        choices=("mtproto", "telegram", "web", "webproxy"),
         default="mtproto",
-        help="mtproto=tg:// links; telegram=https://t.me/proxy links; web=HTTP/SOCKS (default: mtproto)",
+        help="mtproto=MTProxy; telegram=t.me/proxy share links; web=HTTP/SOCKS; webproxy=Telegram WEB",
     )
     parser.add_argument(
         "--count",
@@ -601,6 +710,10 @@ def main(argv: list[str] | None = None) -> int:
         "--network", type=_network_name, help="named local network profile, e.g. wifi or mobile"
     )
     parser.add_argument("--resume", action="store_true", help="continue a recent matching checkpoint")
+    parser.add_argument("--minutes", type=_minutes, help="time budget, e.g. 3, 10 or 20 minutes")
+    parser.add_argument("--fixed-workers", action="store_true", help="disable adaptive concurrency")
+    parser.add_argument("--read-only", action="store_true", help="disable local dashboard scan controls")
+    parser.add_argument("--link", help="WEB share link for add-webproxy")
     parser.add_argument(
         "--single-stage", action="store_true", help="strict baseline scan without sustained finalists"
     )
@@ -619,6 +732,11 @@ def main(argv: list[str] | None = None) -> int:
             config.scan.network = args.network
         if args.resume:
             config.scan.resume = True
+        if args.minutes is not None:
+            config.scan.time_budget_seconds = args.minutes * 60
+        if args.fixed_workers:
+            config.scan.adaptive_workers = False
+        config._dashboard_read_only = args.read_only
         if args.single_stage:
             config.scan.strategy = "single"
         if args.no_prefilter:
@@ -652,6 +770,8 @@ def main(argv: list[str] | None = None) -> int:
             from utils.selftest import run_selftest
 
             return run_selftest(config)
+        elif args.command == "add-webproxy":
+            cmd_add_webproxy(config, args.link)
         else:
             commands = {
                 "best10": cmd_best10,

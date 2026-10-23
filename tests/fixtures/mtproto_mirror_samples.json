@@ -219,11 +219,12 @@
       "source_bytes_sha256": "13c7b1cee831543d9ab1cc4968cca4b1246de9df69470c6a42c7bbbd5b79aa94",
       "candidate_set_sha256": "cc3c9bb45a96b8d8185888d16e5d65a3f8d7f98745c37868e1987862c5ae69bd"
     },
-    "https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB/main/telegram_proxy_no1.txt": {
-      "body": "tg://proxy?server=p42.uk.clazumo.ir&port=8443&secret=ee3f8ff8e102b8b1778367e16aa2b67dba617069322e6272616e63682e696f\ntg://proxy?server=p41.nl.clazumo.ir&port=8443&secret=eebf18f68f966f8b19a9ec1dc5113db42a617069322e6272616e63682e696f\ntg://proxy?server=91.107.140.144&port=443&secret=dd79e7010200010007f0030386e24c3add",
-      "captured_candidates": 6,
-      "source_bytes_sha256": "e20ef156892d86a89b02ca1c916b780fdf260b428feaed8ee5bead76d8d578b0",
-      "candidate_set_sha256": "8b98c0449db4f788e92797dba184ab80b3c7990a4157f9426ccf1befb2107190"
+    "https://raw.githubusercontent.com/shablin/mtproto-proxy/main/data/valid_proxy.txt": {
+      "body": "https://t.me/proxy?server=208.87.242.223&port=8443&secret=EERighJJvXrFGRMCIMjdCQ\nhttps://t.me/proxy?server=159.69.9.248&port=8443&secret=dd104462821249bd7ac519130220c25d09\nhttps://t.me/proxy?server=94.130.15.206&port=443&secret=3XnnAQIAAQAH8AMDhuJMOt0",
+      "captured_candidates": 309,
+      "source_bytes_sha256": "ebd9253f85450e2a6039f6e4d0a9b27408d7a2cad6e9cc6964a2f50f4c40d40d",
+      "candidate_set_sha256": "013ff7f93cd35cffaeee8aa45c56e891352271a9acc5316e8a3ec8173f4155cf",
+      "recorded_at_utc": "2026-10-23T09:03:38.134441+00:00"
     },
     "https://raw.githubusercontent.com/kort0881/telegram-proxy-collector/main/proxy_ru.txt": {
       "body": "tg://proxy?server=31.58.87.179&port=443&secret=ee44bba5fdde571acf4dd7ffe839c20f5b6d2e6265626f6f2e7275\ntg://proxy?server=72.56.102.104&port=443&secret=eed8223b129a62eafcdafc08c4513e6d0531632e7275\ntg://proxy?server=217.138.215.102&port=443&secret=ee8357954a3df5c26e32a7b8a7978c3f107777772e636974696c696e6b2e7275",

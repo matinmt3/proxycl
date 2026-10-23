@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 from utils.interruption import ScanInterrupted
 from utils.models import FailureReason, ProxyResult, TestSample
+from utils.scan_control import AdaptiveLimiter, ScanController, ScanStopped, scan_deadline
 from webproxy.models import WebProxy
 
 if TYPE_CHECKING:
@@ -246,6 +247,7 @@ class WebTester:
         target_url: str = DEFAULT_TARGET,
         expected_status: int = 204,
         ssl_context: ssl.SSLContext | None = None,
+        controller: ScanController | None = None,
     ):
         self.config = config
         self.target_url = target_url
@@ -255,20 +257,33 @@ class WebTester:
         self.initial_results: list[ProxyResult] = []
         self.on_sample = None
         self._current_results: list[ProxyResult | None] = []
+        self.controller = controller or getattr(config, "_scan_controller", None) or ScanController()
+        self._limiter = None
+        self._budget_exhausted = False
+
+    @property
+    def summary(self) -> dict:
+        return {
+            "budget_exhausted": self._budget_exhausted,
+            **(self._limiter.summary if self._limiter is not None else {}),
+        }
 
     async def _test_one(self, proxy: WebProxy, result: ProxyResult | None = None) -> ProxyResult:
         if result is None:
             result = ProxyResult(proxy)
         settings = self.config.testing
         for _ in range(len(result.samples), max(1, settings.retries)):
-            sample = await test_proxy_once(
-                proxy,
-                settings.connect_timeout_seconds,
-                settings.timeout_seconds,
-                target_url=self.target_url,
-                expected_status=self.expected_status,
-                ssl_context=self.ssl_context,
-            )
+            self.controller.check()
+            async with self._limiter.slot() if self._limiter is not None else contextlib.nullcontext():
+                self.controller.check()
+                sample = await test_proxy_once(
+                    proxy,
+                    settings.connect_timeout_seconds,
+                    settings.timeout_seconds,
+                    target_url=self.target_url,
+                    expected_status=self.expected_status,
+                    ssl_context=self.ssl_context,
+                )
             result.samples.append(sample)
             if self.on_sample is not None:
                 notification = self.on_sample(result)
@@ -278,12 +293,16 @@ class WebTester:
 
     async def run_async(self, proxies: list[WebProxy]) -> list[ProxyResult]:
         self.partial_results = []
+        self._budget_exhausted = False
         if not proxies:
             return []
         from tester.runner import worker_count
         from utils.logger import progress_bar
 
         workers = worker_count(self.config.testing.workers, len(proxies))
+        scan = getattr(self.config, "scan", None)
+        self._limiter = AdaptiveLimiter(workers, enabled=getattr(scan, "adaptive_workers", True))
+        deadline = scan_deadline(self.config)
         bar = progress_bar(total=len(proxies), desc=f"Web HTTPS probe ({workers} workers)")
         initial = {result.proxy.key(): result for result in self.initial_results}
         results: list[ProxyResult | None] = [initial.get(proxy.key()) for proxy in proxies]
@@ -296,14 +315,23 @@ class WebTester:
                 await self._test_one(proxy, result)
                 bar.update(1)
 
-        tasks = [asyncio.create_task(worker()) for _ in range(workers)]
+        async def run_workers():
+            async with self._limiter:
+                tasks = [asyncio.create_task(worker()) for _ in range(workers)]
+                try:
+                    await asyncio.gather(*tasks)
+                finally:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
         try:
-            await asyncio.gather(*tasks)
+            await self.controller.run(run_workers, deadline=deadline)
+        except ScanStopped as exc:
+            self._budget_exhausted = exc.reason == "budget"
+            raise
         finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
             bar.close()
             self.partial_results = [
                 replace(result, samples=list(result.samples))

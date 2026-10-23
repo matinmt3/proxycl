@@ -10,6 +10,8 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional
 from urllib.parse import urlencode
 
+from telegram_webproxy.models import TelegramWebProxy
+
 if TYPE_CHECKING:
     from webproxy.models import WebProxy
 
@@ -226,7 +228,9 @@ class ProxyResult:
     quality_policy: TelegramQualityPolicy = field(default_factory=TelegramQualityPolicy)
 
     def _strict_samples(self) -> list[TestSample]:
-        if self.verification_profile != "telegram_session" or not isinstance(self.proxy, Proxy):
+        if self.verification_profile != "telegram_session" or not isinstance(
+            self.proxy, (Proxy, TelegramWebProxy)
+        ):
             return []
         return [
             sample
@@ -338,7 +342,7 @@ class ProxyResult:
                 "last_failure_reason": self.last_failure_reason.value,
             }
         )
-        if isinstance(self.proxy, Proxy):
+        if isinstance(self.proxy, (Proxy, TelegramWebProxy)):
             d["tg_link"] = self.proxy.tg_link()
             d["web_link"] = self.proxy.web_link()
             d.update(

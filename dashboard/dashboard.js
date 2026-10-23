@@ -1,7 +1,7 @@
 "use strict";
 const byId = id => document.getElementById(id);
-const modes = ["mtproto", "telegram", "web"];
-const modeLabels = {mtproto: "MTProto", telegram: "Telegram Web Link", web: "HTTP / SOCKS"};
+const modes = ["mtproto", "telegram", "webproxy", "web"];
+const modeLabels = {mtproto: "MTProto", telegram: "Telegram Web Link", webproxy: "Telegram WEB Proxy", web: "HTTP / SOCKS"};
 const protocolNames = {http: "HTTP · HTTPS tunnel", https: "HTTPS · TLS to proxy", socks4: "SOCKS4", socks5: "SOCKS5"};
 const snapshots = new Map();
 let mode = modes.includes(new URLSearchParams(location.search).get("mode")) ? new URLSearchParams(location.search).get("mode") : "mtproto";
@@ -11,13 +11,114 @@ let activeRequest;
 let generation = 0;
 let renderedIdentity = "";
 let connected = false;
+const explicitNetwork = new URLSearchParams(location.search).has("network");
+let networkScoped = explicitNetwork;
+let networkChangedByUser = false;
+let network = new URLSearchParams(location.search).get("network") || "default";
+if (!/^[A-Za-z0-9_-]{1,32}$/.test(network)) network = "default";
+network = network.toLowerCase();
+let controlToken = null;
+let controlJob = null;
+let controlBusy = false;
+let controlInitialized = false;
 const count = value => Number.isInteger(value) && value >= 0 ? value.toLocaleString() : "—";
 const percentage = value => Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "—";
 const stages = {prefilter: "Reachability prefilter", baseline: "Telegram session baseline", finalists: "Sustained finalist recheck", complete: "Scan complete", stopped: "Scan stopped"};
 
 function selectedNetwork(current) {
-  const value = current?.network ?? current?.summary?.network ?? "default";
+  const value = current?.network ?? current?.summary?.network ?? network;
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(value) ? value : "default";
+}
+
+function controlFeedback(text, error = false) {
+  byId("control-feedback").textContent = text;
+  byId("control-feedback").classList.toggle("error", error);
+}
+
+function renderControl() {
+  const active = controlJob && ["running", "stopping"].includes(controlJob.state);
+  const scoped = controlJob?.mode === mode && controlJob?.network === network;
+  for (const id of ["control-start", "control-resume", "control-recheck"]) byId(id).disabled = !controlToken || controlBusy || active;
+  byId("control-stop").disabled = !controlToken || controlBusy || !active || !scoped || controlJob.state === "stopping";
+  byId("control-state").textContent = controlJob ? `${modeLabels[controlJob.mode] || "Scan"} · ${controlJob.network} · ${controlJob.state}` : "Ready";
+  byId("control-count-field").hidden = byId("control-scope").value !== "count";
+}
+
+async function refreshControl() {
+  const pending = new AbortController();
+  const timeout = setTimeout(() => pending.abort(), 10000);
+  try {
+    const response = await fetch("/api/control", {cache: "no-store", credentials: "same-origin", signal: pending.signal});
+    if (!response.ok) throw new Error("Local controls unavailable");
+    const result = await response.json();
+    if (result.enabled !== true || typeof result.token !== "string" || !/^[A-Za-z0-9_-]{40,100}$/.test(result.token)) {
+      controlToken = null;
+      byId("scan-controls").hidden = true;
+      return;
+    }
+    controlToken = result.token;
+    byId("scan-controls").hidden = false;
+    byId("terminal-title").textContent = "Terminal commands also work.";
+    byId("terminal-description").textContent = "Use the local controls above or copy a command. Keep the dashboard terminal session running.";
+    if (!controlInitialized) {
+      if (!explicitNetwork && !networkChangedByUser && typeof result.network === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(result.network)) {
+        const initialNetwork = result.network.toLowerCase();
+        networkScoped = true;
+        if (network !== initialNetwork) { network = initialNetwork; snapshots.clear(); refresh(true); }
+      }
+      byId("control-network").value = network;
+      controlInitialized = true;
+    }
+    const previous = controlJob;
+    const candidate = result.job;
+    controlJob = candidate && modes.includes(candidate.mode) && typeof candidate.network === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(candidate.network) && ["running", "stopping", "stopped", "complete", "failed"].includes(candidate.state) ? candidate : null;
+    if (controlJob && (previous?.id !== controlJob.id || previous?.state !== controlJob.state)) controlFeedback(String(controlJob.message || controlJob.state), controlJob.state === "failed");
+    renderControl();
+  } catch {
+    if (controlToken) controlFeedback("Cannot reach local scan controls. Keep the dashboard terminal open and retry.", true);
+  } finally { clearTimeout(timeout); }
+}
+
+function controlPayload(action) {
+  const value = byId("control-network").value.trim().toLowerCase();
+  if (!/^[a-z0-9_-]{1,32}$/.test(value) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(value)) throw new Error("Choose a network name using 1–32 letters, digits, underscores or hyphens.");
+  const payload = {action, mode, network: value};
+  if (action === "start") {
+    const scope = byId("control-scope").value;
+    if (scope === "count") {
+      const amount = Number(byId("control-count").value);
+      if (!Number.isInteger(amount) || amount < 1 || amount > 1000000) throw new Error("Enter a whole candidate count from 1 to 1000000.");
+      payload.count = amount;
+    } else if (["3", "10", "20"].includes(scope)) payload.minutes = Number(scope);
+    else if (scope !== "all") throw new Error("Choose ALL, a custom count or a time limit.");
+  }
+  if (action === "resume") payload.command = byId("control-resume-kind").value;
+  return payload;
+}
+
+async function sendControl(action) {
+  if (!controlToken || controlBusy) return;
+  let payload;
+  try { payload = controlPayload(action); }
+  catch (error) { controlFeedback(error.message, true); return; }
+  controlBusy = true;
+  const pending = new AbortController();
+  const timeout = setTimeout(() => pending.abort(), 10000);
+  renderControl();
+  controlFeedback(action === "stop" ? "Requesting a safe stop…" : "Sending scan request…");
+  try {
+    const response = await fetch("/api/control", {method: "POST", credentials: "same-origin", cache: "no-store", signal: pending.signal, headers: {"Content-Type": "application/json", "X-Revmamad-Token": controlToken}, body: JSON.stringify(payload)});
+    const result = await response.json();
+    if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "Scan request was rejected.");
+    networkScoped = true;
+    networkChangedByUser = true;
+    if (network !== payload.network) { network = payload.network; snapshots.clear(); }
+    controlFeedback(action === "stop" ? "Stop requested. Completed checks are being saved; wait for the stopped status." : "Scan accepted. Activity and completed results appear below.");
+    await refreshControl();
+    refresh();
+  } catch (error) {
+    controlFeedback(error.name === "AbortError" ? "Request timed out. Refresh status before retrying; the scan may already have started." : error.message || "Could not send the request. Refresh controls before retrying.", true);
+  } finally { clearTimeout(timeout); controlBusy = false; renderControl(); }
 }
 
 function terminalCommand(current, resume = false, recheck = false) {
@@ -48,7 +149,7 @@ function renderActivity(current) {
   const remaining = progress?.remaining_seconds;
   const estimate = remaining == null ? "Remaining time not yet estimated" : `About ${Math.ceil(remaining / 60)} min remaining (estimate)`;
   byId("progress-meta").textContent = progress
-    ? `${count(progress.completed)} / ${count(progress.total)} in this stage · ${count(progress.qualified)} qualified · ${progress.active ? estimate : progress.resumable ? "Resume is available in the terminal; saved evidence must still pass the age check." : "Start a fresh scan in the terminal."}`
+    ? `${count(progress.completed)} / ${count(progress.total)} in this stage · ${count(progress.qualified)} qualified · ${progress.active ? estimate : progress.resumable ? "Resume saved checks; expired observations will be measured again." : "Start a fresh scan with the controls or terminal."}`
     : current.progress_state === "stale" ? "Activity heartbeat expired. The terminal may have stopped; saved results below keep their original scan time." : "Live activity appears while a terminal scan is running. Results below belong to their saved scan.";
   byId("scan-progress").setAttribute("aria-valuetext", byId("progress-label").textContent + ": " + (progress ? `${progress.completed} of ${progress.total}` : "No recent activity"));
   const observations = Array.isArray(current.history) ? current.history.filter(row => row && typeof row === "object" && row.mode === mode && row.network === network && typeof row.server === "string").slice(0, 20) : [];
@@ -107,7 +208,55 @@ function strictQualified(row) {
   return row.telegram_median_ms <= row.telegram_p95_ms && row.telegram_p95_ms <= policy.max_p95_ms && row.telegram_jitter_ms <= policy.max_jitter_ms && Math.abs(row.reliability_lower_bound - wilson) <= .0001;
 }
 
+function webSecretIdentity(value, path = false) {
+  if (typeof value !== "string") return null;
+  let marked = false;
+  if (/^[A-Za-z0-9_-]+$/.test(value)) {
+    try {
+      const raw = Array.from(atob(value.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - value.length % 4) % 4)), c => c.charCodeAt(0));
+      if (raw[0] === 0x70 && raw.length >= 17) {
+        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let encoded = "", bits = 0, pending = 0;
+        for (const byte of raw) {
+          pending = (pending << 8) | byte;
+          bits += 8;
+          while (bits >= 6) { bits -= 6; encoded += alphabet[(pending >> bits) & 63]; }
+        }
+        if (bits) encoded += alphabet[(pending << (6 - bits)) & 63];
+        if (encoded !== value) return null;
+        marked = true;
+        value = raw.slice(1).map(byte => byte.toString(16).padStart(2, "0")).join("");
+      }
+    } catch { return null; }
+  }
+  if (path && !marked) return null;
+  const identity = secretIdentity(value);
+  return identity && (identity.length === 32 || identity.length === 34 && identity.startsWith("dd")) ? identity : null;
+}
+
+function safeWebProxyConnection(proxy, profile, text = proxy.web_link) {
+  if (profile !== "telegram_session" || !strictQualified(proxy) || proxy.protocol !== "webproxy" || proxy.port !== 443) return null;
+  if (typeof text !== "string" || text.length > 2048 || /[\u0000-\u0020]/.test(text)) return null;
+  try {
+    const parsed = new URL(text);
+    const https = parsed.protocol === "https:" && ["t.me", "telegram.me"].includes(parsed.hostname) && !parsed.port && parsed.pathname === "/webproxy";
+    const direct = parsed.protocol === "tg:" && parsed.hostname === "webproxy" && !parsed.port && !parsed.pathname;
+    if (!(https || direct) || parsed.hash || parsed.username || parsed.password) return null;
+    if ([...parsed.searchParams.keys()].some(key => !["server", "secret"].includes(key)) || ["server", "secret"].some(key => parsed.searchParams.getAll(key).length !== 1)) return null;
+    const server = parsed.searchParams.get("server");
+    const parts = server.split("/");
+    const host = parts.shift().toLowerCase();
+    const path = parts.join("/");
+    if (!host.includes(".") || host.length > 253 || /^[\d.]+$/.test(host) || !host.split(".").every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) return null;
+    if (parts.length && (!path || path.length > 128 || !/^[A-Za-z0-9][A-Za-z0-9_-]*(?:\/[A-Za-z0-9][A-Za-z0-9_-]*)*$/.test(path))) return null;
+    if (host + (parts.length ? "/" + path : "") !== proxy.server) return null;
+    const secret = webSecretIdentity(parsed.searchParams.get("secret"), !!path);
+    return secret && secret === webSecretIdentity(proxy.secret) ? text : null;
+  } catch { return null; }
+}
+
 function safeConnection(proxy, profile = "telegram_session") {
+  if (mode === "webproxy") return safeWebProxyConnection(proxy, profile) && safeWebProxyConnection(proxy, profile, proxy.tg_link);
   if (mode !== "web" && (profile !== "telegram_session" || !strictQualified(proxy))) return null;
   const text = proxy[{mtproto: "tg_link", telegram: "web_link", web: "uri"}[mode]];
   if (typeof text !== "string" || text.length > 2048 || /[\u0000-\u0020]/.test(text)) return null;
@@ -135,6 +284,15 @@ function safeConnection(proxy, profile = "telegram_session") {
     }
     return text;
   } catch { return null; }
+}
+
+function qualityReason(proxy, strict) {
+  if (mode === "web") return proxy.success_rate >= 1 ? "All measured origin requests passed; website access can still vary." : "Some origin requests failed; prefer a fresh recheck before use.";
+  if (!strict) return "More strict session evidence is needed before recommending this connection.";
+  if (proxy.strict_successes < proxy.attempts) return "Qualified with a reconnect failure; another recheck can confirm current stability.";
+  if (proxy.telegram_p95_ms > 700) return "Reliable in this short sample, with slower Telegram round trips.";
+  if (proxy.telegram_jitter_ms > 150) return "All measured sessions passed, but Telegram latency varied.";
+  return "Consistent Telegram round trips and successful reconnects in this short sample.";
 }
 
 async function copyText(text, button) {
@@ -169,8 +327,8 @@ function resultCard(proxy, profile = proxy.verification_profile || "transport") 
   head.append(node("span", `#${proxy.rank}`, "rank"));
   const identity = node("div", "", "identity");
   const server = String(proxy.server);
-  identity.append(node("b", `${server.includes(":") ? `[${server}]` : server}:${proxy.port}`, "endpoint"));
-  identity.append(node("span", mode === "web" ? protocolNames[proxy.protocol] || "HTTP / SOCKS proxy" : strict ? "Strict Telegram check · server identity + encrypted pings" : "Transport probe only · re-scan for strict verification", "protocol-label"));
+  identity.append(node("b", mode === "webproxy" ? server : `${server.includes(":") ? `[${server}]` : server}:${proxy.port}`, "endpoint"));
+  identity.append(node("span", mode === "web" ? protocolNames[proxy.protocol] || "HTTP / SOCKS proxy" : strict ? mode === "webproxy" ? "Certified WEB relay · strict Telegram check + encrypted pings" : "Strict Telegram check · server identity + encrypted pings" : "Transport probe only · re-scan for strict verification", "protocol-label"));
   head.append(identity);
   item.append(head);
   const measures = node("div", "", "result-measures");
@@ -185,6 +343,7 @@ function resultCard(proxy, profile = proxy.verification_profile || "transport") 
     measures.append(measure);
   }
   item.append(measures);
+  item.append(node("p", qualityReason(proxy, strict), "quality-note"));
   if (mode !== "web") {
     if (strict) {
       item.append(node("p", `Probe duration: ${milliseconds(proxy.avg_latency_ms)} · Telegram median: ${milliseconds(proxy.telegram_median_ms)} · Ping jitter: ${milliseconds(proxy.telegram_jitter_ms)} · ${proxy.ping_count} matched pongs · DCs ${proxy.dc_ids_verified.join(", ")}`, "measurement-note"));
@@ -198,19 +357,20 @@ function resultCard(proxy, profile = proxy.verification_profile || "transport") 
   if (connection) {
     const actions = node("div", "", "result-actions");
     if (mode !== "web") {
-      const link = node("a", mode === "telegram" ? "Open Telegram link" : "Connect Telegram", "button primary");
+      const link = node("a", mode === "telegram" ? "Open Telegram link" : mode === "webproxy" ? "Connect Telegram WEB" : "Connect Telegram", "button primary");
       link.href = connection;
       link.rel = "noreferrer";
       actions.append(link);
     }
-    const copy = node("button", mode === "mtproto" ? "Copy link" : mode === "telegram" ? "Copy HTTPS link" : "Copy proxy URI", mode !== "web" ? "button quiet" : "button primary");
+    const copy = node("button", mode === "mtproto" ? "Copy link" : mode === "telegram" ? "Copy HTTPS link" : mode === "webproxy" ? "Copy WEB HTTPS link" : "Copy proxy URI", mode !== "web" ? "button quiet" : "button primary");
     copy.type = "button";
-    copy.addEventListener("click", () => copyText(connection, copy));
+    copy.addEventListener("click", () => copyText(mode === "webproxy" ? proxy.web_link : connection, copy));
     actions.append(copy);
     item.append(actions);
     const details = node("details", "", "connection-details");
     details.append(node("summary", "View connection text"), node("code", connection));
     item.append(details);
+    if (mode === "webproxy") item.append(node("p", "Requires a Telegram client with WEB proxy support; the HTTPS link may not open correctly in a browser. Use Connect Telegram WEB for the direct app link.", "measurement-note"));
   } else item.append(node("p", mode === "web" ? "Connection text unavailable for this result." : "Read-only evidence. Run a strict scan before using this endpoint.", "muted"));
   return item;
 }
@@ -337,6 +497,8 @@ async function refresh(force = true) {
   const controller = new AbortController();
   activeRequest = controller;
   const requestMode = mode;
+  const requestNetwork = network;
+  refreshControl();
   const ticket = ++generation;
   let timedOut = false;
   const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 10000);
@@ -344,11 +506,16 @@ async function refresh(force = true) {
   byId("refresh").setAttribute("aria-busy", "true");
   status("Refreshing saved scan results…");
   try {
-    const response = await fetch(`/api/snapshot?mode=${requestMode}`, {cache: "no-store", signal: controller.signal});
+    const response = await fetch(`/api/snapshot?mode=${requestMode}${networkScoped ? `&network=${encodeURIComponent(requestNetwork)}` : ""}`, {cache: "no-store", signal: controller.signal});
     if (!response.ok) throw new Error(`Dashboard returned HTTP ${response.status}`);
     const current = await response.json();
-    if (ticket !== generation || requestMode !== mode) return;
+    if (ticket !== generation || requestMode !== mode || requestNetwork !== network) return;
     if (current.mode !== requestMode || !["ready", "missing", "legacy", "corrupt"].includes(current.state) || !Array.isArray(current.rows) || !current.summary || !Array.isArray(current.source_reports)) throw new Error("Invalid dashboard response");
+    if (!networkScoped && typeof current.network === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(current.network)) {
+      network = current.network;
+      networkScoped = true;
+      byId("control-network").value = network;
+    }
     snapshots.set(requestMode, current);
     connected = true;
     render(current, force);
@@ -385,9 +552,9 @@ function selectMode(next, focus = false) {
   }
   if (focus) byId(`tab-${mode}`).focus();
   byId("proxy-panel").setAttribute("aria-labelledby", `tab-${mode}`);
-  byId("mode-label").textContent = mode === "mtproto" ? "TELEGRAM TRANSPORT" : mode === "telegram" ? "TELEGRAM HTTPS SHARE LINKS" : "HTTP / SOCKS CONNECTIVITY";
-  byId("mode-title").textContent = mode === "mtproto" ? "Your best MTProto connections" : mode === "telegram" ? "Your best Telegram Web Links" : "Your best HTTP / SOCKS proxies";
-  byId("mode-description").textContent = mode === "mtproto" ? "Strict MTProto server authentication and repeated encrypted Telegram pings; ranked by measured RTT and reconnect reliability." : mode === "telegram" ? "The same strict MTProto checks, shared as HTTPS t.me/proxy links with the original server, port and secret." : "HTTP, HTTPS and SOCKS proxies checked through a certificate-verified HTTPS request.";
+  byId("mode-label").textContent = mode === "mtproto" ? "TELEGRAM TRANSPORT" : mode === "telegram" ? "TELEGRAM HTTPS SHARE LINKS" : mode === "webproxy" ? "TELEGRAM WEB · CERTIFIED WSS RELAY" : "HTTP / SOCKS CONNECTIVITY";
+  byId("mode-title").textContent = mode === "mtproto" ? "Your best MTProto connections" : mode === "telegram" ? "Your best Telegram Web Links" : mode === "webproxy" ? "Your best Telegram WEB proxies" : "Your best HTTP / SOCKS proxies";
+  byId("mode-description").textContent = mode === "mtproto" ? "Strict MTProto server authentication and repeated encrypted Telegram pings; ranked by measured RTT and reconnect reliability." : mode === "telegram" ? "The same strict MTProto checks, shared as HTTPS t.me/proxy links with the original server, port and secret." : mode === "webproxy" ? "Telegram's WEB relay transport uses certificate-verified HTTPS and WSS. Recommendations still require Telegram server authentication and encrypted pings through that relay." : "HTTP, HTTPS and SOCKS proxies checked through a certificate-verified HTTPS request.";
   byId("verification-note").textContent = mode !== "web" ? "Telegram RTT measures encrypted ping round trips, not file-transfer throughput or authorized messaging. Reconnect samples do not establish long-term uptime." : "Verification checks the configured HTTPS origin at scan time. It does not guarantee access to every website.";
   byId("telegram-rtt-sort").hidden = mode === "web";
   byId("probe-duration-sort").textContent = mode === "web" ? "Lowest latency" : "Shortest probe duration (diagnostic)";
@@ -397,7 +564,8 @@ function selectMode(next, focus = false) {
   byId("search").value = "";
   byId("protocol").value = "all";
   byId("sortBy").value = "score";
-  history.replaceState(null, "", `?mode=${mode}`);
+  history.replaceState(null, "", `?mode=${mode}${networkScoped ? `&network=${encodeURIComponent(network)}` : ""}`);
+  renderControl();
   render(snapshots.get(mode), true);
   refresh(true);
 }
@@ -432,6 +600,23 @@ byId("clear-filters").addEventListener("click", () => {
 byId("copy-command").addEventListener("click", event => copyText(byId("scan-command").textContent, event.currentTarget));
 byId("copy-resume").addEventListener("click", event => copyText(terminalCommand(snapshots.get(mode), true), event.currentTarget));
 byId("copy-recheck").addEventListener("click", event => copyText(terminalCommand(snapshots.get(mode), false, true), event.currentTarget));
+byId("control-scope").addEventListener("change", renderControl);
+for (const action of ["start", "stop", "resume", "recheck"]) byId(`control-${action}`).addEventListener("click", () => sendControl(action));
+byId("control-network").addEventListener("change", () => {
+  try {
+    const selected = controlPayload("recheck").network;
+    if (selected !== network) {
+      network = selected;
+      networkScoped = true;
+      networkChangedByUser = true;
+      snapshots.clear();
+      history.replaceState(null, "", `?mode=${mode}&network=${encodeURIComponent(network)}`);
+      render(snapshots.get(mode), true);
+      refresh(true);
+    }
+    renderControl();
+  } catch (error) { controlFeedback(error.message, true); }
+});
 document.addEventListener("visibilitychange", () => {
   clearTimeout(pollTimer);
   if (document.hidden) { if (activeRequest) activeRequest.abort(); }

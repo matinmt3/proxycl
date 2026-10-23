@@ -18,7 +18,7 @@
           <path d="M24 3v21l15 15M3 24h12M24 36v9M36 24h9"/>
           <circle class="radar-dot" cx="24" cy="24" r="3"/>
         </svg>
-        <div><p class="eyebrow">LOCAL PROXY RADAR <span class="version">V3.3</span></p><h1>REVMAMAD</h1></div>
+        <div><p class="eyebrow">LOCAL PROXY RADAR <span class="version">V3.4</span></p><h1>REVMAMAD</h1></div>
       </div>
       <div class="toolbar">
         <button id="refresh" class="button" type="button">Refresh</button>
@@ -29,6 +29,7 @@
     <div class="mode-tabs" role="tablist" aria-label="Proxy type">
       <button id="tab-mtproto" type="button" role="tab" aria-selected="true" aria-controls="proxy-panel" data-mode="mtproto">MTProto <span>Telegram</span></button>
       <button id="tab-telegram" type="button" role="tab" aria-selected="false" aria-controls="proxy-panel" tabindex="-1" data-mode="telegram">Telegram Web Link <span>t.me/proxy</span></button>
+      <button id="tab-webproxy" type="button" role="tab" aria-selected="false" aria-controls="proxy-panel" tabindex="-1" data-mode="webproxy">Telegram WEB Proxy <span>WSS · t.me/webproxy</span></button>
       <button id="tab-web" type="button" role="tab" aria-selected="false" aria-controls="proxy-panel" tabindex="-1" data-mode="web">HTTP / SOCKS <span>HTTPS origin probe</span></button>
     </div>
 
@@ -47,6 +48,19 @@
         <label id="progress-label" for="scan-progress">No active scan reported</label>
         <progress id="scan-progress" max="1" value="0">0%</progress>
         <p id="progress-meta" class="muted" aria-live="polite">Live activity appears while a terminal scan is running.</p>
+      </section>
+
+      <section id="scan-controls" class="scan-controls" aria-labelledby="control-title" hidden>
+        <div class="progress-heading"><h3 id="control-title">Run a scan on this device</h3><span id="control-state" class="pill neutral">Ready</span></div>
+        <p class="measurement-note">Keep this terminal session open. The proxy type selected above is tested separately; completed checks are saved when you stop.</p>
+        <div class="control-fields">
+          <div class="field"><label for="control-network">Network profile</label><input id="control-network" value="default" maxlength="32" pattern="[A-Za-z0-9_-]{1,32}" autocomplete="off" spellcheck="false" aria-describedby="network-help"><small id="network-help" class="muted">A name you choose, such as wifi or mobile.</small></div>
+          <div class="field"><label for="control-scope">Scan size</label><select id="control-scope"><option value="all">ALL candidates</option><option value="count">Custom count</option><option value="3">3 minutes</option><option value="10">10 minutes</option><option value="20">20 minutes</option></select></div>
+          <div class="field" id="control-count-field" hidden><label for="control-count">Candidates to test</label><input id="control-count" type="number" min="1" max="1000000" step="1" inputmode="numeric" value="100"></div>
+          <div class="field"><label for="control-resume-kind">Resume saved</label><select id="control-resume-kind"><option value="best10">Scan</option><option value="recheck">Recheck</option></select></div>
+        </div>
+        <div class="control-actions"><button id="control-start" class="button primary" type="button">Start scan</button><button id="control-stop" class="button danger" type="button" disabled>Stop &amp; save</button><button id="control-resume" class="button quiet" type="button">Resume saved</button><button id="control-recheck" class="button quiet" type="button">Recheck top results</button></div>
+        <p id="control-feedback" class="control-feedback" role="status" aria-live="polite" aria-atomic="true">Controls run only on this device's local dashboard address.</p>
       </section>
 
       <div class="snapshot-info">
@@ -85,7 +99,7 @@
       </section>
 
       <aside class="terminal-hint" aria-label="Start a scan in the terminal">
-        <div><strong>Scans start in your terminal.</strong><p>This dashboard displays saved verified results. Keep its terminal session running.</p></div>
+        <div><strong id="terminal-title">Scans start in your terminal.</strong><p id="terminal-description">This dashboard displays saved verified results. Keep its terminal session running.</p></div>
         <code id="scan-command" dir="ltr">python main.py best10 --mode mtproto --count ALL</code>
         <button id="copy-command" class="button quiet" type="button">Copy command</button>
         <div class="terminal-followups"><button id="copy-resume" class="button quiet" type="button" hidden>Copy resume command</button><button id="copy-recheck" class="button quiet" type="button">Copy recheck command</button></div>

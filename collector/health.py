@@ -63,7 +63,7 @@ class SourceHealth:
     """One network and feed family. Failed writes never prevent a proxy scan."""
 
     def __init__(self, config, kind: str, *, clock=None):
-        if kind not in {"mtproto", "web"}:
+        if kind not in {"mtproto", "web", "webproxy"}:
             raise ValueError("Unknown source health family")
         scan = getattr(config, "scan", None)
         self.enabled = bool(getattr(scan, "source_health_enabled", False))

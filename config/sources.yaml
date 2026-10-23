@@ -147,9 +147,9 @@ sources:
   type: http_txt
   url: https://raw.githubusercontent.com/Darklord2025/telegram-proxies-collector/main/proxies
   enabled: true
-- name: V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB/telegram_proxy_no1.txt
+- name: shablin/mtproto-proxy/data/valid_proxy.txt
   type: http_txt
-  url: https://raw.githubusercontent.com/V2RAYCONFIGSPOOL/TELEGRAM_PROXY_SUB/main/telegram_proxy_no1.txt
+  url: https://raw.githubusercontent.com/shablin/mtproto-proxy/main/data/valid_proxy.txt
   enabled: true
 - name: kort0881/telegram-proxy-collector/proxy_ru.txt
   type: http_txt
@@ -531,4 +531,16 @@ web_sources:
   type: http_txt
   url: https://raw.githubusercontent.com/iplocate/free-proxy-list/main/protocols/socks5.txt
   protocol: socks5
+  enabled: true
+
+# Telegram WEB is separate from the HTTP/SOCKS web_sources above.
+# This operator-published test endpoint is a candidate, never prequalified proof.
+webproxy_sources:
+- name: Community WEB operator test link
+  type: github_raw
+  url: https://raw.githubusercontent.com/Chumbayoumba/telegram-webproxy-guide/main/README.md
+  enabled: true
+- name: Manual Telegram WEB links
+  type: http_txt
+  url: file://config/manual_webproxies.txt
   enabled: true

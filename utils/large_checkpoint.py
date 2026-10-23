@@ -16,6 +16,7 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 
 from utils.scan_state import (
+    REFRESH_RETENTION_SECONDS,
     _json_tree,
     _network,
     _number,
@@ -332,11 +333,18 @@ class SQLiteCheckpointStore:
         self._created_at, self._positions = created, positions
         self._candidate_signatures, self._result_records = signatures, result_records
 
-    def load(self) -> tuple[list, dict]:
+    def _load(self, *, for_refresh=False) -> tuple[list, dict]:
         now = time.time()
         candidates, positions, signatures, records, results = [], {}, [], {}, []
         with self._database() as database:
-            metadata = self._metadata(database, now=now)
+            metadata = self._metadata(database, now=now, enforce_age=not for_refresh)
+            if for_refresh:
+                _timestamp(
+                    metadata["created_at"],
+                    "candidate pool retention",
+                    now=now,
+                    max_age=REFRESH_RETENTION_SECONDS,
+                )
             self._check_counts(database, metadata)
             for index, (position, identity, content) in enumerate(
                 database.execute("SELECT position,identity,payload FROM candidates ORDER BY position")
@@ -357,7 +365,7 @@ class SQLiteCheckpointStore:
                     "SELECT candidate_position,ordinal,sample_count,payload FROM results ORDER BY ordinal"
                 )
             ):
-                row = _decode(content, now=now, max_age=self.max_age_seconds)
+                row = _decode(content, now=now, max_age=None if for_refresh else self.max_age_seconds)
                 result = deserialize_result(row)
                 if (
                     ordinal != expected
@@ -378,6 +386,13 @@ class SQLiteCheckpointStore:
         self._created_at, self._positions = metadata["created_at"], positions
         self._candidate_signatures, self._result_records = signatures, records
         return candidates, state
+
+    def load(self) -> tuple[list, dict]:
+        return self._load()
+
+    def load_for_refresh(self) -> tuple[list, dict]:
+        """Load an incomplete retained pool without treating old proof as fresh."""
+        return self._load(for_refresh=True)
 
     def complete(self) -> None:
         with self._database(write=True) as database:

@@ -18,6 +18,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from pathlib import Path
 
+from telegram_webproxy.models import TelegramWebProxy, normalize_address
 from tester.secrets import decode_secret, normalize_port, normalize_server
 from utils.models import FailureReason, Proxy, ProxyResult, TelegramQualityPolicy, TestSample
 from webproxy.models import WebProxy
@@ -28,7 +29,8 @@ MAX_CANDIDATES = 100_000
 MAX_SAMPLES = 10_000
 MAX_HISTORY_OBSERVATIONS = 100_000
 CLOCK_SKEW_SECONDS = 60
-_MODES = {"mtproto", "telegram", "web"}
+REFRESH_RETENTION_SECONDS = 7 * 24 * 60 * 60
+_MODES = {"mtproto", "telegram", "web", "webproxy"}
 _PRIVATE_FIELDS = {
     "auth_key",
     "authkey",
@@ -86,12 +88,28 @@ def _network(value):
     return value
 
 
-def serialize_proxy(proxy: Proxy | WebProxy) -> dict:
+def _proxy_kind(proxy):
+    if isinstance(proxy, TelegramWebProxy):
+        return "webproxy"
+    if isinstance(proxy, Proxy):
+        return "mtproto"
+    if isinstance(proxy, WebProxy):
+        return "web"
+    raise ValueError("Unsupported proxy candidate")
+
+
+def _matches_mode(proxy, mode):
+    return _proxy_kind(proxy) == ("mtproto" if mode in {"mtproto", "telegram"} else mode)
+
+
+def serialize_proxy(proxy: Proxy | WebProxy | TelegramWebProxy) -> dict:
     if isinstance(proxy, Proxy):
         row = {"kind": "mtproto", **proxy.to_dict()}
     elif isinstance(proxy, WebProxy):
         row = {"kind": "web", **proxy.to_dict()}
         row.pop("uri", None)
+    elif isinstance(proxy, TelegramWebProxy):
+        row = proxy.to_dict()
     else:
         raise ValueError("Unsupported proxy candidate")
     # Constructors are permissive for MTProto: validate even locally-created data.
@@ -99,13 +117,22 @@ def serialize_proxy(proxy: Proxy | WebProxy) -> dict:
     return row
 
 
-def deserialize_proxy(row: dict) -> Proxy | WebProxy:
+def deserialize_proxy(row: dict) -> Proxy | WebProxy | TelegramWebProxy:
     if not isinstance(row, dict):
         raise ValueError("Invalid saved proxy candidate")
-    server = normalize_server(row.get("server"))
     port = normalize_port(row.get("port"))
     source = _text(row.get("source", "unknown"), "proxy source", empty=True)
+    if row.get("kind") == "webproxy":
+        if row.get("protocol") != "webproxy":
+            raise ValueError("Invalid saved Telegram WEB protocol")
+        tag = row.get("tag")
+        if tag is not None:
+            _text(tag, "proxy tag", 256, empty=True)
+        return TelegramWebProxy(row.get("server"), row.get("secret"), source, tag, port)
+    server = normalize_server(row.get("server"))
     if row.get("kind") == "mtproto":
+        if row.get("protocol", "mtproto") != "mtproto":
+            raise ValueError("Invalid saved MTProto protocol")
         secret = row.get("secret")
         decode_secret(secret)
         tag = row.get("tag")
@@ -177,7 +204,7 @@ def deserialize_result(row: dict) -> ProxyResult:
         raise ValueError("Invalid saved result verification_profile")
     if isinstance(proxy, WebProxy) and profile == "telegram_session":
         raise ValueError("Web proxy cannot contain Telegram session evidence")
-    if isinstance(proxy, Proxy) and profile == "web":
+    if isinstance(proxy, (Proxy, TelegramWebProxy)) and profile == "web":
         raise ValueError("MTProto proxy cannot use a web verification profile")
     policy = row.get("quality_policy", {})
     if not isinstance(policy, dict):
@@ -226,7 +253,17 @@ def _json_tree(value, *, now, max_age=None, depth=0):
             if normalized in _PRIVATE_FIELDS:
                 raise ValueError(f"Refusing to save private field: {key}")
             if (
-                key in {"timestamp", "created_at", "updated_at", "last_tested", "started_at", "completed_at"}
+                key
+                in {
+                    "timestamp",
+                    "created_at",
+                    "updated_at",
+                    "last_tested",
+                    "started_at",
+                    "completed_at",
+                    "candidate_pool_created_at",
+                    "original_started_at",
+                }
                 and item is not None
             ):
                 stamp = item
@@ -316,7 +353,11 @@ def scan_fingerprint(config, mode: str) -> str:
             testing.pop(name)
     output = _mapping(config.output)
     output.pop("folder", None)
-    sources = config.web_sources if mode == "web" else config.sources
+    sources = (
+        config.web_sources
+        if mode == "web"
+        else config.webproxy_sources if mode == "webproxy" else config.sources
+    )
     identities = []
     for source in sources:
         source = _mapping(source)
@@ -333,7 +374,13 @@ def scan_fingerprint(config, mode: str) -> str:
     if getattr(config, "scan", None) is not None:
         scan = _mapping(config.scan)
         for name in list(scan):
-            if name == "network" or name.startswith(("resume", "checkpoint", "history")):
+            if name in {
+                "network",
+                "adaptive_workers",
+                "time_budget_seconds",
+                "finalist_reserve_fraction",
+                "refresh_stale_on_resume",
+            } or name.startswith(("resume", "checkpoint", "history")):
                 scan.pop(name)
         semantics["scan"] = scan
     # Optional v3.3 policy sections are included without depending on loader changes.
@@ -363,7 +410,7 @@ class CheckpointStore:
         # A long ALL scan must keep saving. Evidence age is enforced on resume.
         _json_tree(state, now=now)
         rows = [serialize_proxy(proxy) for proxy in candidates]
-        if any((row["kind"] == "web") != (self.mode == "web") for row in rows):
+        if any(not _matches_mode(proxy, self.mode) for proxy in candidates):
             raise ValueError("Checkpoint candidate kind does not match scan mode")
         if len({proxy.key() for proxy in candidates}) != len(candidates):
             raise ValueError("Checkpoint contains duplicate candidates")
@@ -385,9 +432,9 @@ class CheckpointStore:
         )
         self._created_at = created_at
 
-    def _load(self, *, enforce_age=True):
+    def _load(self, *, enforce_age=True, for_refresh=False):
         row = _read(self.path)
-        if row.get("schema") != SCHEMA:
+        if type(row.get("schema")) is not int or row["schema"] != SCHEMA:
             raise ValueError("Unsupported checkpoint schema; start a fresh scan")
         if row.get("mode") != self.mode or row.get("network") != self.network:
             raise ValueError("Checkpoint mode/network mismatch; start a fresh scan")
@@ -397,6 +444,8 @@ class CheckpointStore:
         max_age = self.max_age_seconds if enforce_age else None
         _json_tree(row, now=now, max_age=max_age)
         created = _timestamp(row.get("created_at"), "created_at", now=now, max_age=max_age)
+        if for_refresh:
+            _timestamp(created, "candidate pool retention", now=now, max_age=REFRESH_RETENTION_SECONDS)
         updated = _timestamp(row.get("updated_at"), "updated_at", now=now, max_age=max_age)
         if updated < created or type(row.get("complete")) is not bool:
             raise ValueError("Invalid checkpoint timestamps or completion flag")
@@ -410,7 +459,7 @@ class CheckpointStore:
         ):
             raise ValueError("Invalid checkpoint candidates/state")
         candidates = [deserialize_proxy(proxy) for proxy in candidates]
-        if any(isinstance(proxy, WebProxy) != (self.mode == "web") for proxy in candidates):
+        if any(not _matches_mode(proxy, self.mode) for proxy in candidates):
             raise ValueError("Checkpoint candidate kind does not match scan mode")
         if len({proxy.key() for proxy in candidates}) != len(candidates):
             raise ValueError("Checkpoint contains duplicate candidates")
@@ -419,6 +468,16 @@ class CheckpointStore:
 
     def load(self) -> tuple[list, dict]:
         candidates, state, _ = self._load()
+        return candidates, state
+
+    def load_for_refresh(self) -> tuple[list, dict]:
+        """Load an incomplete pool for revalidation within seven days.
+
+        Configuration, future time, identity and completion guards still apply.
+        This method does not make any sample fresh; refresh_saved_evidence must
+        discard expired proof before the engine receives the returned state.
+        """
+        candidates, state, _ = self._load(enforce_age=False, for_refresh=True)
         return candidates, state
 
     def complete(self) -> None:
@@ -476,21 +535,25 @@ class HistoryStore:
     def _validate_row(self, row):
         if not isinstance(row, dict) or not re.fullmatch(r"[a-f0-9]{64}", str(row.get("identity", ""))):
             raise ValueError("Invalid history identity")
-        normalize_server(row.get("server"))
-        normalize_port(row.get("port"))
         kind = row.get("kind")
         if (
             not isinstance(kind, str)
-            or kind not in {"mtproto", "web"}
+            or kind not in {"mtproto", "web", "webproxy"}
             or type(row.get("qualified")) is not bool
         ):
             raise ValueError("Invalid history proxy kind or qualified flag")
-        if (kind == "web") != (self.mode == "web"):
+        expected_kind = "mtproto" if self.mode in {"mtproto", "telegram"} else self.mode
+        if kind != expected_kind:
             raise ValueError("History proxy kind does not match mode")
-        if (
-            row.get("protocol") not in ("http", "https", "socks4", "socks5")
-            and row.get("protocol") != "mtproto"
-        ):
+        port = normalize_port(row.get("port"))
+        if kind == "webproxy":
+            normalize_address(row.get("server"))
+            if port != 443:
+                raise ValueError("Invalid history Telegram WEB port")
+        else:
+            normalize_server(row.get("server"))
+        allowed = {"http", "https", "socks4", "socks5"} if kind == "web" else {kind}
+        if not isinstance(row.get("protocol"), str) or row["protocol"] not in allowed:
             raise ValueError("Invalid history protocol")
         for name in ("successes", "attempts"):
             if type(row.get(name)) is not int or not 0 <= row[name] <= MAX_SAMPLES:
@@ -512,7 +575,7 @@ class HistoryStore:
         for result in results:
             validated = deserialize_result(serialize_result(result))
             proxy = validated.proxy
-            if isinstance(proxy, WebProxy) != (self.mode == "web"):
+            if not _matches_mode(proxy, self.mode):
                 raise ValueError("History candidate kind does not match scan mode")
             identity = hashlib.sha256(proxy.key().encode("utf-8")).hexdigest()
             if identity in seen:
@@ -531,14 +594,18 @@ class HistoryStore:
                     "identity": identity,
                     "server": proxy.server,
                     "port": proxy.port,
-                    "kind": "web" if isinstance(proxy, WebProxy) else "mtproto",
+                    "kind": _proxy_kind(proxy),
                     "protocol": getattr(proxy, "protocol", "mtproto"),
                     "last_tested": max((sample.timestamp for sample in validated.samples), default=now),
                     "successes": validated.successes,
                     "attempts": validated.attempts,
-                    "p95_ms": (validated.telegram_p95_ms if isinstance(proxy, Proxy) else web_p95),
+                    "p95_ms": (
+                        validated.telegram_p95_ms if isinstance(proxy, (Proxy, TelegramWebProxy)) else web_p95
+                    ),
                     "qualified": (
-                        validated.strict_eligible if isinstance(proxy, Proxy) else validated.successes > 0
+                        validated.strict_eligible
+                        if isinstance(proxy, (Proxy, TelegramWebProxy))
+                        else validated.successes > 0
                     ),
                 }
             )

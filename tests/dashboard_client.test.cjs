@@ -61,6 +61,99 @@ function allText(element) {
   return [element.textContent || "", ...element.children.map(allText)].join(" ");
 }
 
+function webRow(path = "base/path", dd = false) {
+  const inner = (dd ? "dd" : "") + "00112233445566778899aabbccddeeff";
+  const server = "relay.example" + (path ? "/" + path : "");
+  const encoded = path ? Buffer.concat([Buffer.from([0x70]), Buffer.from(inner, "hex")]).toString("base64url") : inner;
+  const query = new URLSearchParams({server, secret: encoded});
+  return strongRow({kind: "webproxy", protocol: "webproxy", server, secret: inner, tg_link: "tg://webproxy?" + query, web_link: "https://t.me/webproxy?" + query});
+}
+
+test("WEB relay actions match path and inner secret while keeping all strict gates", () => {
+  const {context} = client();
+  vm.runInContext("mode = 'webproxy'", context);
+  for (const path of ["", "base/path"]) for (const dd of [false, true]) {
+    context.row = webRow(path, dd);
+    assert.equal(vm.runInContext("safeConnection(row)", context), context.row.tg_link);
+  }
+  for (const extra of [
+    {strict_eligible: false}, {ping_count: 1}, {dc_ids_verified: [2]}, {protocol: "mtproto"},
+    {tg_link: "tg://proxy?server=relay.example&port=443&secret=00112233445566778899aabbccddeeff"},
+    {web_link: webRow("other").web_link}, {tg_link: webRow("other").tg_link},
+    {web_link: webRow().web_link + "&port=443"},
+    {web_link: webRow().web_link.replace("t.me", "evil.example")},
+    {web_link: "https://t.me/webproxy?server=relay.example%2Fbase%2Fpath&secret=00112233445566778899aabbccddeeff"},
+  ]) {
+    context.row = {...webRow(), ...extra};
+    assert.equal(vm.runInContext("safeConnection(row)", context), null);
+  }
+});
+
+test("WEB direct app action and HTTPS copy stay distinct and show compatibility limitation", () => {
+  const {context} = client();
+  vm.runInContext("mode = 'webproxy'", context);
+  context.row = webRow();
+  const card = vm.runInContext("resultCard(row)", context);
+  const text = allText(card);
+  assert.match(text, /Connect Telegram WEB/);
+  assert.match(text, /Copy WEB HTTPS link/);
+  assert.match(text, /Requires a Telegram client with WEB proxy support/);
+  assert.match(text, /HTTPS link may not open correctly/);
+  assert.doesNotMatch(text, /relay.example\/base\/path:443/);
+});
+
+test("control payloads separate ALL count time and explicit resume target", () => {
+  const {context, element} = client();
+  element("control-network").value = "MOBILE";
+  element("control-scope").value = "all";
+  assert.deepEqual(JSON.parse(vm.runInContext("JSON.stringify(controlPayload('start'))", context)), {action: "start", mode: "mtproto", network: "mobile"});
+  element("control-scope").value = "count";
+  element("control-count").value = "25";
+  assert.equal(vm.runInContext("controlPayload('start').count", context), 25);
+  element("control-scope").value = "10";
+  assert.equal(vm.runInContext("controlPayload('start').minutes", context), 10);
+  element("control-resume-kind").value = "recheck";
+  assert.equal(vm.runInContext("controlPayload('resume').command", context), "recheck");
+  assert.equal(vm.runInContext("controlPayload('resume').minutes", context), undefined);
+});
+
+test("invalid control fields never become shell commands or scan payloads", () => {
+  const {context, element} = client();
+  element("control-scope").value = "all";
+  for (const network of ["../mobile", "CON", "wifi;echo", "", "a".repeat(33)]) {
+    element("control-network").value = network;
+    assert.throws(() => vm.runInContext("controlPayload('start')", context), /network name/);
+  }
+  element("control-network").value = "wifi";
+  element("control-scope").value = "count";
+  for (const count of ["0", "1000001", "1.5", "25;echo", ""]) {
+    element("control-count").value = count;
+    assert.throws(() => vm.runInContext("controlPayload('start')", context), /candidate count/);
+  }
+});
+
+test("single active job disables new scans and only its matching scope can stop", () => {
+  const {context, element} = client();
+  vm.runInContext("controlToken = 'local-token'; controlJob = {mode:'webproxy',network:'mobile',state:'running'}; mode='mtproto'; network='mobile'; renderControl()", context);
+  assert.equal(element("control-start").disabled, true);
+  assert.equal(element("control-resume").disabled, true);
+  assert.equal(element("control-stop").disabled, true);
+  vm.runInContext("mode='webproxy'; renderControl()", context);
+  assert.equal(element("control-stop").disabled, false);
+  vm.runInContext("controlJob.state='stopping'; renderControl()", context);
+  assert.equal(element("control-stop").disabled, true);
+});
+
+test("plain quality reasons describe observed reconnect and latency limits", () => {
+  const {context} = client();
+  context.row = strongRow({attempts: 8, strict_successes: 7});
+  assert.match(vm.runInContext("qualityReason(row, true)", context), /reconnect failure/);
+  context.row = strongRow({telegram_p95_ms: 1000});
+  assert.match(vm.runInContext("qualityReason(row, true)", context), /slower Telegram/);
+  context.row = strongRow();
+  assert.match(vm.runInContext("qualityReason(row, true)", context), /short sample/);
+});
+
 test("strict cards show encrypted Telegram RTT and counts rather than download speed", () => {
   const {context} = client();
   context.row = strongRow();
@@ -196,10 +289,10 @@ test("Telegram Web Link uses matched HTTPS share links and never HTTP proxy URIs
   }
 });
 
-test("three keyboard tabs cycle and the HTTP/SOCKS mode keeps its own labels", () => {
+test("four keyboard tabs cycle and the HTTP/SOCKS mode keeps its own labels", () => {
   const {context, element} = client();
   const arrow = {key: "ArrowRight", preventDefault() {}};
-  for (const expected of ["telegram", "web", "mtproto"]) {
+  for (const expected of ["telegram", "webproxy", "web", "mtproto"]) {
     const current = vm.runInContext("mode", context);
     element(`tab-${current}`).listeners.keydown(arrow);
     assert.equal(vm.runInContext("mode", context), expected);

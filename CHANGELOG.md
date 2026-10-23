@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.4.0 — 2026-10-23
+
+- Add the separate Telegram WEB relay mode, canonical raw/dd/base-path share links, manual import and bounded discovery. Implement the official HTTPS, HTTPS lanes, WebSocket and WebSocket lanes contract without executing downloaded bridge scripts. Run the existing authenticated Telegram proof through the relay; an HTTP response or WSS upgrade cannot qualify links. Document native TLS/WebView and client-link compatibility limits.
+- Add adaptive attempt admission based on local event-loop lag, optional scan time budgets and reserved finalist time. Carry one absolute deadline across collection, checkpoint setup and all engines. Keep finished samples and candidate coverage honest when stopping, retaining the pending pool for Resume.
+- Add Smart Resume with a seven-day candidate-pool retention bound, discard expired candidate evidence and reset stale screening decisions before retesting. Preserve fresh samples, frozen unfinished finalists, run identity and history accounting in JSON and large HTTP/SOCKS SQLite state.
+- Add real loopback dashboard start/stop/resume/recheck actions with count/time/network inputs. Enforce single-flight jobs, strict input/Host/Origin/token checks, bounded JSON requests and read-only non-loopback/ASGI access. Show four separate modes and qualification explanations with touch-sized controls.
+- Expand offline installed-runtime diagnostics to eleven checks including WEB vectors and actual authenticated local start/stop. Fix Markdown code-link extraction, ambiguous numeric/IDNA hosts, cancellation cleanup, WEB recheck restoration, coverage accounting and 32-column banner wrapping found during review.
+- Replace the removed V2RAYCONFIGSPOOL feed with an actually retrieved shablin publisher list; the final host collection found all 51 MTProto feeds nonempty, with 2,462 deduplicated candidates. This is feed access evidence, not endpoint health.
+- Physical Android execution remains unverified on this host; no ADB device is connected. Public endpoint observations and controlled reference-server interoperability are documented separately from tests.
+
 ## 3.3.0 — 2026-10-23
 
 - Add default staged Telegram scans: transport prefilter, strict baseline, then up to twenty finalists with five additional sessions, ten pongs per session and reconnect spacing. Completed default scans require at least seven strict successes; interrupted baseline-qualified results are marked provisional.
